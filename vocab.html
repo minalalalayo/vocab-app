@@ -30,8 +30,27 @@
     --good: #2ec26a;
     --good-2: #23a259;
     --line: #26304a;
+    --tint: rgba(255,255,255,0.05);   /* subtle fill on cards */
+    --danger: #ff7a7a;
+    --warn: #ffcf6f;
     --tap: 56px;                 /* minimum tap target */
     --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  /* Light theme — toggled from Settings (data-theme on <html>). */
+  :root[data-theme="light"] {
+    --bg: #f4f7fb;
+    --card: #ffffff;
+    --card-2: #eaeff7;
+    --text: #131824;
+    --muted: #5c667a;
+    --accent: #2f7ae0;
+    --accent-2: #1f5fc0;
+    --good: #1e9e54;
+    --good-2: #17853f;
+    --line: #d3dbe8;
+    --tint: rgba(0,0,0,0.05);
+    --danger: #d0342f;
+    --warn: #a9750a;
   }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -175,7 +194,7 @@
   }
   ul.examples { list-style: none; margin: 0; padding: 0; }
   ul.examples li {
-    background: rgba(255,255,255,0.04);
+    background: var(--tint);
     border: 1px solid var(--line);
     border-radius: 12px;
     padding: 12px 14px;
@@ -299,14 +318,14 @@
   .ft-card.flipped .ft-back { display: block; }
   .ft-card.flipped .ft-hint { display: none; }
   .ft-back .fb-ko { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
-  .ft-back .fb-ex { background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 10px;
+  .ft-back .fb-ex { background: var(--tint); border: 1px solid var(--line); border-radius: 10px;
     padding: 9px 12px; margin: 8px 0; font-size: 15px; line-height: 1.4; text-align: left; }
   .ft-hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
   .ft-actions { flex: 0 0 auto; display: flex; gap: 10px; padding-bottom: calc(4px + var(--safe-b)); }
   .ft-btn { flex: 1; min-height: var(--tap); border-radius: 14px; border: 1px solid var(--line);
     font-size: 17px; font-weight: 800; cursor: pointer; }
   .ft-btn.know { background: var(--good); border-color: var(--good); color: #06210f; }
-  .ft-btn.dunno { background: transparent; color: #ff8a8a; border-color: #a13333; }
+  .ft-btn.dunno { background: transparent; color: var(--danger); border-color: var(--danger); }
   .ft-btn:disabled { opacity: 0.4; }
   .quiz-status {
     flex: 1;
@@ -335,7 +354,7 @@
   }
   .q-heard { font-size: 16px; color: var(--muted); min-height: 24px; line-height: 1.4; }
   .q-heard.correct { color: var(--good); font-weight: 700; }
-  .q-heard.wrong { color: #ff6f6f; font-weight: 700; }
+  .q-heard.wrong { color: var(--danger); font-weight: 700; }
   .q-streak { font-size: 24px; letter-spacing: 6px; min-height: 30px; }
 
   .big-btn {
@@ -454,7 +473,7 @@
     margin: 4px 0 12px;
   }
   .lbl { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 4px 0 8px; }
-  .warn { color: #ffcf6f; font-size: 13px; line-height: 1.5; margin: 4px 0 10px; }
+  .warn { color: var(--warn); font-size: 13px; line-height: 1.5; margin: 4px 0 10px; }
 
   /* Segmented control */
   .seg, .seg-btn { }
@@ -549,8 +568,8 @@
   .wh-row .wh-num { font-size: 13px; color: var(--muted); white-space: nowrap; }
   .wh-row .wh-pct { font-weight: 700; font-size: 14px; min-width: 46px; text-align: right; }
   .wh-pct.good { color: var(--good); }
-  .wh-pct.mid { color: #ffcf6f; }
-  .wh-pct.low { color: #ff6f6f; }
+  .wh-pct.mid { color: var(--warn); }
+  .wh-pct.low { color: var(--danger); }
 
   /* ---------- Update banner ---------- */
   .updatebar {
@@ -758,6 +777,13 @@
   </div>
   <div class="sheet-body">
     <div class="srow">
+      <label>테마 Theme</label>
+      <div class="seg">
+        <button class="seg-btn" id="thDark" aria-selected="true">🌙 다크</button>
+        <button class="seg-btn" id="thLight" aria-selected="false">☀️ 라이트</button>
+      </div>
+    </div>
+    <div class="srow">
       <label>말하기 속도 <b id="rateVal"></b></label>
       <input type="range" id="setRate" min="0.5" max="1.3" step="0.05">
     </div>
@@ -933,6 +959,7 @@ function defaultStore() {
       repeat: 1,                  // self-check repeats per word
       shuffle: false,
       quizMode: "mic",            // "mic" | "selfcheck"
+      theme: "dark",              // "dark" | "light"
       apiKey: ""                  // Anthropic key (client-side; see warning in UI)
     },
     ui: { index: 0 }              // current study position (into active list)
@@ -940,7 +967,7 @@ function defaultStore() {
 }
 
 // Read a setting with a safe default, so stores saved by older versions still work.
-const CFG_DEFAULTS = { rate: 0.95, silence: 6, repeat: 1, shuffle: false, quizMode: "mic", apiKey: "" };
+const CFG_DEFAULTS = { rate: 0.95, silence: 6, repeat: 1, shuffle: false, quizMode: "mic", theme: "dark", apiKey: "" };
 function cfg(k) {
   const v = store && store.settings ? store.settings[k] : undefined;
   return v === undefined ? CFG_DEFAULTS[k] : v;
@@ -1132,6 +1159,8 @@ const el = {
   // settings sheet
   setSheet: document.getElementById("setSheet"),
   setClose: document.getElementById("setClose"),
+  thDark: document.getElementById("thDark"),
+  thLight: document.getElementById("thLight"),
   setRate: document.getElementById("setRate"),
   rateVal: document.getElementById("rateVal"),
   setSilence: document.getElementById("setSilence"),
@@ -2532,8 +2561,26 @@ function uniqueId(en) {
   return id;
 }
 
+/* ---------- Theme ---------- */
+function applyTheme(theme) {
+  const t = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", t);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", t === "light" ? "#f4f7fb" : "#0b0f17");
+  if (el.thDark) el.thDark.setAttribute("aria-selected", String(t === "dark"));
+  if (el.thLight) el.thLight.setAttribute("aria-selected", String(t === "light"));
+}
+function setTheme(theme) {
+  store.settings.theme = (theme === "light" ? "light" : "dark");
+  save();
+  applyTheme(store.settings.theme);
+}
+el.thDark.addEventListener("click", () => setTheme("dark"));
+el.thLight.addEventListener("click", () => setTheme("light"));
+
 /* ---------- Settings wiring ---------- */
 function syncSettingsUI() {
+  applyTheme(cfg("theme"));
   el.setRate.value = cfg("rate");     el.rateVal.textContent = Number(cfg("rate")).toFixed(2) + "×";
   el.setSilence.value = cfg("silence"); el.silVal.textContent = cfg("silence") + "초";
   el.setRepeat.value = cfg("repeat"); el.repVal.textContent = cfg("repeat") + "회";
@@ -2787,6 +2834,7 @@ if (store.ui.play && store.ui.play.paused &&
   play.resumable = true;
 }
 
+applyTheme(cfg("theme"));   // apply saved theme before first paint
 save();       // persist seed / migrations on first run
 setupPWA();
 render();
