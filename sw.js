@@ -14,7 +14,7 @@
   On each new deploy, bump CACHE (e.g. vocab-v2 -> vocab-v3). activate() deletes every
   cache except the current one, so old cached HTML/JS is purged.
 */
-const CACHE = "vocab-v6";
+const CACHE = "vocab-v7";
 
 self.addEventListener("install", () => {
   // Activate this version as soon as it's installed (page shows an update banner).

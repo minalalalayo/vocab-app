@@ -1920,20 +1920,45 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* =========================================================================
-   INTERACTIVE QUIZ  —  4-option multiple choice + flashcard self-test
+   INTERACTIVE QUIZ  —  3-option sentence-blank multiple choice + flashcard
    Tap-based (no audio). Both update per-word stats and log daily activity.
    ========================================================================= */
+// Built-in distractor pool (~150 common words/idioms). Used ONLY as wrong
+// options — never added to the user's word list. Lets the quiz run with 1 word.
+const DISTRACTOR_POOL = [
+  "time","people","water","place","work","world","life","hand","part","child",
+  "eye","woman","man","day","thing","money","story","fact","month","right",
+  "study","book","word","business","issue","side","kind","head","house","service",
+  "friend","father","power","hour","game","line","end","member","law","car",
+  "city","name","team","minute","idea","body","information","back","parent","face",
+  "level","office","door","health","person","art","war","history","party","result",
+  "change","morning","reason","research","girl","guy","moment","air","teacher","force",
+  "education","run","walk","talk","read","write","listen","speak","learn","teach",
+  "buy","sell","open","close","start","stop","help","play","eat","drink",
+  "sleep","drive","travel","happy","sad","angry","tired","hungry","quick","slow",
+  "easy","hard","early","late","bright","quiet","loud","clean","heavy","light",
+  "break the ice","hit the road","call it a day","piece of cake","under the weather",
+  "on the same page","keep an eye on","get the hang of","run out of","make up your mind",
+  "look forward to","hit the ceiling","cost an arm and a leg","once in a blue moon",
+  "spill the beans","bite the bullet","pull someone's leg","hit the sack","back to square one",
+  "cut corners","on cloud nine","out of the blue","a blessing in disguise","beat around the bush",
+  "the ball is in your court","burn the midnight oil","get cold feet","let the cat out of the bag",
+  "miss the boat","no pain no gain","the last straw","throw in the towel","up in the air",
+  "wrap your head around","add fuel to the fire","barking up the wrong tree","best of both worlds",
+  "cut to the chase","jump on the bandwagon","speak of the devil","take it with a grain of salt"
+];
+
 const mc = { active: false, timer: null, roundLeft: [], score: { right: 0, wrong: 0 }, locked: false };
 const ft = { active: false, weights: {}, cur: null, flipped: false, score: { right: 0, wrong: 0 } };
 
-function mcEmpty(need2) {
+function mcEmpty(reason) {
   el.mcScore.textContent = "";
   el.mcOpts.innerHTML = "";
   el.mcQ.className = "mc-q";
-  el.mcQ.innerHTML = '<div class="empty" style="margin:auto">' +
-    (store.words.length === 0
-      ? "아직 단어가 없어요.<br>학습 탭의 ＋ 로 추가하세요."
-      : (need2 ? "객관식은 단어가 2개 이상 필요해요." : "모든 단어를 외웠어요! 🎉")) + "</div>";
+  const msg = reason === "noex" ? "객관식은 예문이 있는 단어가 필요해요.<br>단어에 예문을 추가해 주세요."
+            : reason === "done" ? "모든 단어를 외웠어요! 🎉"
+            : "아직 단어가 없어요.<br>학습 탭의 ＋ 로 추가하세요.";
+  el.mcQ.innerHTML = '<div class="empty" style="margin:auto">' + msg + '</div>';
 }
 
 /* ---------- Multiple choice ---------- */
@@ -1949,7 +1974,10 @@ function stopMC() {
   if (mc.timer) { clearTimeout(mc.timer); mc.timer = null; }
   mc.locked = false;
 }
-function buildMCRound() { mc.roundLeft = shuffleArr(active().map(w => w.id)); }
+const hasExample = w => (w.ex || []).some(s => s && s.trim());
+function buildMCRound() {
+  mc.roundLeft = shuffleArr(active().filter(hasExample).map(w => w.id));
+}
 function renderMC() {
   // Re-entry (returning to the tab mid-round): only draw if nothing is shown.
   if (mc.active && el.mcOpts.children.length === 0 && !mc.locked) nextMC();
@@ -1958,38 +1986,43 @@ function nextMC() {
   if (!mc.active) return;
   mc.locked = false;
   const act = active();
-  if (act.length < 2) { mcEmpty(act.length > 0); return; }
+  if (!act.length) { mcEmpty(store.words.length === 0 ? "none" : "done"); return; }
 
+  // Next word in the round that has a usable example.
   let w = null;
   while (mc.roundLeft.length) {
-    w = act.find(x => x.id === mc.roundLeft.shift());
-    if (w) break;
+    const cand = act.find(x => x.id === mc.roundLeft.shift());
+    if (cand && hasExample(cand)) { w = cand; break; }
   }
-  if (!w) { buildMCRound(); nextMC(); return; }   // round done → reshuffle, keep going
-
-  el.mcScore.textContent = "이번 라운드  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
-
-  // Type A: word → pick meaning.  Type B: example with blank → pick word.
-  const exs = (w.ex || []).filter(Boolean);
-  const type = (exs.length && Math.random() < 0.5) ? "B" : "A";
-  let correct, field;
-  if (type === "A") {
-    correct = w.ko; field = "ko";
-    el.mcQ.className = "mc-q word";
-    el.mcQ.textContent = w.en;
-  } else {
-    correct = w.en; field = "en";
-    el.mcQ.className = "mc-q sentence";
-    el.mcQ.innerHTML = blankOut(exs[Math.floor(Math.random() * exs.length)], w.en);
+  if (!w) {                                   // round done → reshuffle eligible words
+    buildMCRound();
+    if (!mc.roundLeft.length) { mcEmpty("noex"); return; }
+    return nextMC();
   }
 
-  // Distractors drawn from other words.
+  // Question = one of the word's examples with the word (whole idiom) blanked out.
+  const exs = (w.ex || []).filter(s => s && s.trim());
+  const re = new RegExp(w.en.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  const preferred = exs.filter(s => re.test(s));           // prefer an example that contains the word
+  const pool = preferred.length ? preferred : exs;
+  el.mcQ.className = "mc-q sentence";
+  el.mcQ.innerHTML = blankOut(pool[Math.floor(Math.random() * pool.length)], w.en);
+
+  // 3 options: the correct word + 2 distractors (my other words first, then built-in pool).
+  const correct = w.en;
   const opts = [correct];
   for (const x of shuffleArr(act.filter(x => x.id !== w.id))) {
-    const v = x[field];
-    if (v && !opts.includes(v)) opts.push(v);
-    if (opts.length >= 4) break;
+    if (x.en && !opts.includes(x.en)) opts.push(x.en);
+    if (opts.length >= 3) break;
   }
+  if (opts.length < 3) {
+    for (const p of shuffleArr(DISTRACTOR_POOL)) {
+      if (!opts.includes(p)) opts.push(p);
+      if (opts.length >= 3) break;
+    }
+  }
+
+  el.mcScore.textContent = "이번 라운드  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
   el.mcOpts.innerHTML = "";
   shuffleArr(opts).forEach(val => {
     const b = document.createElement("button");
