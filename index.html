@@ -2045,21 +2045,23 @@ function nextMC() {
   el.mcQ.innerHTML = blankOut(pool[Math.floor(Math.random() * pool.length)], w.en);
 
   // 3 options: the correct answer + 2 distractors.
-  // Priority: my other words first, then the built-in pool. Within each source,
-  // prefer the SAME form as the answer (idiom→idiom, word→word) so options compete.
+  // Composition: 1 distractor from MY other words + 1 from the built-in pool.
+  // If I have no other suitable word, take BOTH from the pool. Prefer the SAME
+  // form as the answer (idiom→idiom, word→word) in every slot.
   const correct = w.en;
   const isPhrase = s => /\s/.test(String(s).trim());
   const wantPhrase = isPhrase(correct);
   const opts = [correct];
   const add = v => { if (v && !opts.includes(v) && opts.length < 3) opts.push(v); };
-  const sameForm = arr => arr.filter(v => isPhrase(v) === wantPhrase);
+  const byForm = arr => shuffleArr(arr.filter(v => isPhrase(v) === wantPhrase))
+                  .concat(shuffleArr(arr.filter(v => isPhrase(v) !== wantPhrase)));  // same form first
 
-  const userOther = shuffleArr(act.filter(x => x.id !== w.id).map(x => x.en).filter(Boolean));
-  const poolShuf = shuffleArr(DISTRACTOR_POOL);
-  sameForm(userOther).forEach(add);   // 1) my words, matching form
-  userOther.forEach(add);             // 2) my words, any form (keep user-first priority)
-  sameForm(poolShuf).forEach(add);    // 3) pool, matching form
-  poolShuf.forEach(add);              // 4) pool, any form (last resort)
+  const userOrdered = byForm(act.filter(x => x.id !== w.id).map(x => x.en).filter(Boolean));
+  const poolOrdered = byForm(DISTRACTOR_POOL);
+
+  if (userOrdered.length) add(userOrdered[0]);                               // 1 from my words (if any)
+  for (const p of poolOrdered) { add(p); if (opts.length >= 3) break; }      // pool: fills 1, or 2 if no user word
+  if (opts.length < 3) for (const u of userOrdered) { add(u); if (opts.length >= 3) break; }  // safety
 
   el.mcScore.textContent = "이번 라운드  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
   el.mcOpts.innerHTML = "";
