@@ -1923,29 +1923,65 @@ document.addEventListener("visibilitychange", () => {
    INTERACTIVE QUIZ  —  3-option sentence-blank multiple choice + flashcard
    Tap-based (no audio). Both update per-word stats and log daily activity.
    ========================================================================= */
-// Built-in distractor pool (~150 common words/idioms). Used ONLY as wrong
-// options — never added to the user's word list. Lets the quiz run with 1 word.
+// Built-in distractor pool (~500 upper-intermediate→advanced words & real idioms,
+// TOEIC/TOEFL level, no archaic/rare). Used ONLY as wrong options — never added to
+// the user's list. Split by form (single word vs phrase) so distractors can match
+// the answer's form. Lets the quiz run even with 1 user word.
 const DISTRACTOR_POOL = [
-  "time","people","water","place","work","world","life","hand","part","child",
-  "eye","woman","man","day","thing","money","story","fact","month","right",
-  "study","book","word","business","issue","side","kind","head","house","service",
-  "friend","father","power","hour","game","line","end","member","law","car",
-  "city","name","team","minute","idea","body","information","back","parent","face",
-  "level","office","door","health","person","art","war","history","party","result",
-  "change","morning","reason","research","girl","guy","moment","air","teacher","force",
-  "education","run","walk","talk","read","write","listen","speak","learn","teach",
-  "buy","sell","open","close","start","stop","help","play","eat","drink",
-  "sleep","drive","travel","happy","sad","angry","tired","hungry","quick","slow",
-  "easy","hard","early","late","bright","quiet","loud","clean","heavy","light",
-  "break the ice","hit the road","call it a day","piece of cake","under the weather",
-  "on the same page","keep an eye on","get the hang of","run out of","make up your mind",
-  "look forward to","hit the ceiling","cost an arm and a leg","once in a blue moon",
-  "spill the beans","bite the bullet","pull someone's leg","hit the sack","back to square one",
-  "cut corners","on cloud nine","out of the blue","a blessing in disguise","beat around the bush",
-  "the ball is in your court","burn the midnight oil","get cold feet","let the cat out of the bag",
-  "miss the boat","no pain no gain","the last straw","throw in the towel","up in the air",
-  "wrap your head around","add fuel to the fire","barking up the wrong tree","best of both worlds",
-  "cut to the chase","jump on the bandwagon","speak of the devil","take it with a grain of salt"
+  // --- single words (advanced vocabulary) ---
+  "abundant","accessible","accommodate","accountable","accumulate","accurate","acknowledge","acquire","adequate","adjacent",
+  "advocate","aggregate","allocate","alleviate","ambiguous","ample","analyze","anticipate","apparent","appraise",
+  "arbitrary","articulate","aspire","assess","assert","assign","assume","attain","attribute","authentic",
+  "autonomy","beneficial","bias","bolster","calibrate","candid","capacity","cater","cease","coherent",
+  "coincide","collaborate","commence","commend","compatible","compelling","compensate","competent","compile","complement",
+  "comprehensive","comprise","conceive","concise","concur","condense","conducive","confer","confidential","conform",
+  "consecutive","consensus","consequent","conserve","considerable","consistent","consolidate","conspicuous","constitute","constrain",
+  "consult","contemplate","contingent","contradict","contribute","controversial","conventional","convey","cooperate","coordinate",
+  "corroborate","counterpart","credible","crucial","cumbersome","curb","curtail","deduce","deficit","delegate",
+  "deliberate","delineate","demonstrate","denote","deploy","deprive","derive","designate","deter","deteriorate",
+  "detrimental","devise","diagnose","differentiate","diligent","diminish","discard","discern","disclose","discrepancy",
+  "disperse","disregard","disrupt","dissuade","distinct","distort","distribute","diverge","diverse","divert",
+  "dominant","dubious","durable","dwindle","elaborate","elicit","eligible","eliminate","elude","embark",
+  "embed","emerge","eminent","emphasize","empirical","enact","encompass","endeavor","endorse","endure",
+  "enforce","enhance","enlighten","ensure","entail","entitle","envision","equivalent","erratic","escalate",
+  "essential","evaluate","evident","evoke","exacerbate","exceed","exclude","exempt","exert","exhaustive",
+  "expedite","explicit","exploit","extensive","extract","facilitate","feasible","fluctuate","formulate","foster",
+  "fragile","fundamental","generate","generic","genuine","gauge","hamper","hinder","hypothesis","identical",
+  "illustrate","imminent","impartial","impede","implement","implicit","imply","impose","incentive","incidental",
+  "incorporate","incur","indicate","indispensable","induce","inevitable","infer","influential","ingenious","inherent",
+  "inhibit","initiate","innovative","inquire","insight","integral","integrate","intervene","intricate","intrinsic",
+  "intuitive","invaluable","investigate","irrelevant","isolate","jeopardize","justify","latent","legitimate","leverage",
+  "liable","lucrative","magnitude","mandate","manipulate","marginal","mediate","meticulous","mitigate","moderate",
+  "modify","momentum","monitor","mundane","mutual","negligible","negotiate","nominal","notable","notion",
+  "nurture","obscure","obsolete","obstruct","obtain","offset","ominous","optimal","optimize","outweigh",
+  "overhaul","oversee","overwhelm","paramount","pending","perceive","peripheral","permeate","perpetuate","persistent",
+  "pertinent","phenomenon","pinpoint","plausible","ponder","pragmatic","precede","precise","preclude","predominant",
+  "preliminary","premise","prerequisite","prescribe","preserve","prevail","prevalent","proficient","profound","prohibit",
+  "prominent","prompt","proponent","prospective","provoke","prudent","quantify","ratify","rationale","reciprocal",
+  "reconcile","redundant","refine","refute","regime","reinforce","reiterate","relevant","reluctant","remedy",
+  "render","renowned","replenish","replicate","resilient","resolve","respective","restrain","retain","retrieve",
+  "revise","rigorous","robust","sanction","scrutinize","simultaneous","skeptical","sophisticated","sparse","speculate",
+  "sporadic","stabilize","stagnant","streamline","stringent","subjective","subsequent","subsidize","substantial","substantiate",
+  "subtle","sufficient","supersede","supplement","suppress","surpass","susceptible","sustain","tangible","tedious",
+  "tentative","terminate","threshold","thrive","transient","transparent","trigger","ubiquitous","unanimous","undermine",
+  "underlying","undertake","uniform","unprecedented","unveil","utilize","valid","verify","versatile","viable",
+  "vigilant","vindicate","vivid","volatile","vulnerable","warrant","widespread","yield","zealous","astute",
+  // --- multi-word idioms / phrasal verbs / collocations ---
+  "cut corners","on the fence","get the ball rolling","break the ice","hit the road","call it a day","piece of cake","under the weather","on the same page","keep an eye on",
+  "get the hang of","make up your mind","look forward to","cost an arm and a leg","once in a blue moon","spill the beans","bite the bullet","hit the sack","back to square one","on cloud nine",
+  "out of the blue","beat around the bush","burn the midnight oil","get cold feet","let the cat out of the bag","miss the boat","throw in the towel","up in the air","add fuel to the fire","best of both worlds",
+  "cut to the chase","jump on the bandwagon","speak of the devil","take with a grain of salt","the last straw","wrap your head around","bend over backwards","blow off steam","break the news","bring to the table",
+  "call the shots","come to terms with","cut it close","draw the line","drop the ball","face the music","get out of hand","go the extra mile","hit the nail on the head","in the long run",
+  "jump to conclusions","keep in touch","learn the ropes","make ends meet","on second thought","pull strings","put on hold","raise the bar","read between the lines","rule of thumb",
+  "see eye to eye","take for granted","the tip of the iceberg","think outside the box","throw under the bus","touch base","turn a blind eye","under the radar","up to speed","walk on eggshells",
+  "weigh the pros and cons","a far cry from","at stake","by and large","in a nutshell","on the ball","out of the loop","par for the course","the bottom line","ahead of the curve",
+  "behind the scenes","in full swing","on the right track","back to the drawing board","ballpark figure","corner the market","put the cart before the horse","the elephant in the room","water under the bridge","a blessing in disguise",
+  "cut some slack","get the picture","go with the flow","hold your horses","in the same boat","keep it under wraps","kill two birds with one stone","no strings attached","off the record","on the house",
+  "once and for all","out of the question","play it by ear","pull yourself together","second to none","take the plunge","up and running","wear many hats","on the same wavelength","off the top of my head",
+  "carry out","bring about","come across","figure out","look into","put off","set up","take on","turn down","work out",
+  "break down","call off","follow up","hand over","lay off","phase out","roll out","scale back","shut down","sort out",
+  "weigh in","wind down","back up","brush up","catch up","cut back","draw up","fill in","hold off","iron out",
+  "map out","opt out","pin down","ramp up","size up","step down","tone down","wrap up","bring up","put together"
 ];
 
 const mc = { active: false, timer: null, roundLeft: [], score: { right: 0, wrong: 0 }, locked: false };
@@ -2008,19 +2044,22 @@ function nextMC() {
   el.mcQ.className = "mc-q sentence";
   el.mcQ.innerHTML = blankOut(pool[Math.floor(Math.random() * pool.length)], w.en);
 
-  // 3 options: the correct word + 2 distractors (my other words first, then built-in pool).
+  // 3 options: the correct answer + 2 distractors.
+  // Priority: my other words first, then the built-in pool. Within each source,
+  // prefer the SAME form as the answer (idiom→idiom, word→word) so options compete.
   const correct = w.en;
+  const isPhrase = s => /\s/.test(String(s).trim());
+  const wantPhrase = isPhrase(correct);
   const opts = [correct];
-  for (const x of shuffleArr(act.filter(x => x.id !== w.id))) {
-    if (x.en && !opts.includes(x.en)) opts.push(x.en);
-    if (opts.length >= 3) break;
-  }
-  if (opts.length < 3) {
-    for (const p of shuffleArr(DISTRACTOR_POOL)) {
-      if (!opts.includes(p)) opts.push(p);
-      if (opts.length >= 3) break;
-    }
-  }
+  const add = v => { if (v && !opts.includes(v) && opts.length < 3) opts.push(v); };
+  const sameForm = arr => arr.filter(v => isPhrase(v) === wantPhrase);
+
+  const userOther = shuffleArr(act.filter(x => x.id !== w.id).map(x => x.en).filter(Boolean));
+  const poolShuf = shuffleArr(DISTRACTOR_POOL);
+  sameForm(userOther).forEach(add);   // 1) my words, matching form
+  userOther.forEach(add);             // 2) my words, any form (keep user-first priority)
+  sameForm(poolShuf).forEach(add);    // 3) pool, matching form
+  poolShuf.forEach(add);              // 4) pool, any form (last resort)
 
   el.mcScore.textContent = "이번 라운드  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
   el.mcOpts.innerHTML = "";
