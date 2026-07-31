@@ -1,0 +1,2794 @@
+<!--
+  Vocab — mobile-first English vocabulary PWA for Korean speakers
+  Single self-contained file. No build step, no external dependencies.
+
+  LOOP 1 (this file): Data model + flashcard UI + memorized list + localStorage.
+  Future loops will add: audio (Web Speech), driving mode, add-words, PWA offline.
+
+  Architecture note: state lives in one `store` object persisted to localStorage.
+  All rendering funnels through render() so later loops can add views/screens
+  without reworking data flow.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<!-- PWA / standalone install -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="단어장">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Vocab — 영어 단어장</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --card: #151b28;
+    --card-2: #1d2536;
+    --text: #f3f6fc;
+    --muted: #9aa7bd;
+    --accent: #4f9dff;
+    --accent-2: #2f7ae0;
+    --good: #2ec26a;
+    --good-2: #23a259;
+    --line: #26304a;
+    --tap: 56px;                 /* minimum tap target */
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior: none;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+  header h1 {
+    font-size: 17px;
+    margin: 0;
+    letter-spacing: 0.2px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hgroup { flex: 0 0 auto; }
+  .hgroup .count { white-space: nowrap; }
+  header .count {
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Tabs ---------- */
+  .tabs {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px 4px;
+  }
+  .tab {
+    flex: 1;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tab[aria-selected="true"] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* ---------- Main / card area ---------- */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    padding-bottom: calc(16px + var(--safe-b));
+    min-height: 0;
+  }
+
+  .card {
+    flex: 1;
+    background: linear-gradient(160deg, var(--card), var(--card-2));
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    overflow-y: auto;
+  }
+
+  .card .kicker {
+    font-size: 12px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .card .english {
+    font-size: clamp(30px, 9vw, 52px);
+    font-weight: 800;
+    line-height: 1.1;
+    margin: auto 0;
+    text-align: center;
+    word-break: break-word;
+  }
+
+  .card .hint {
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    margin-top: auto;
+  }
+
+  /* Revealed content */
+  .reveal { display: none; margin-top: 18px; }
+  .card.is-open .reveal { display: block; }
+  .card.is-open .english { margin: 0 0 4px; text-align: left; font-size: clamp(28px, 8vw, 44px); }
+  .card.is-open .hint { display: none; }
+  .card.is-open .center-wrap { margin: 0; }
+
+  .center-wrap { margin: auto 0; }
+
+  .korean {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 4px 0 16px;
+  }
+  .ex-label {
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  ul.examples { list-style: none; margin: 0; padding: 0; }
+  ul.examples li {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+
+  /* ---------- Controls under card ---------- */
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .btn {
+    min-height: var(--tap);
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex: 1;
+    padding: 0 10px;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn.prev, .btn.next { flex: 0 0 64px; font-size: 22px; }
+  .btn.memorize {
+    background: var(--good);
+    border-color: var(--good);
+    color: #06210f;
+  }
+  .btn.unmark {
+    background: transparent;
+    border-color: var(--good);
+    color: var(--good);
+  }
+
+  /* ---------- Memorized list ---------- */
+  .list { display: flex; flex-direction: column; gap: 10px; }
+  .list-item {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .list-item .en { font-weight: 700; font-size: 17px; }
+  .list-item .ko { color: var(--muted); font-size: 14px; margin-top: 2px; }
+  .list-item .undo {
+    flex: 0 0 auto;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 10px;
+    border: 1px solid var(--good);
+    background: transparent;
+    color: var(--good);
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    margin: auto;
+    padding: 40px 20px;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+  .empty .big { font-size: 40px; display: block; margin-bottom: 12px; }
+
+  /* ---------- Voice quiz ---------- */
+  .tab { font-size: 13px; padding: 0 4px; }
+
+  .quiz-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .subview { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .tabs, .qmode { }
+  .qmode .qchip { font-size: 12px; padding: 0 2px; }
+
+  /* Multiple choice */
+  .mc-score { text-align: center; color: var(--muted); font-size: 14px; font-weight: 700; padding: 6px 0 2px; }
+  .mc-q {
+    flex: 0 0 auto; min-height: 34%;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: 12px; font-weight: 800; line-height: 1.3; word-break: keep-all;
+  }
+  .mc-q.word { font-size: clamp(30px, 9vw, 50px); }
+  .mc-q.sentence { font-size: clamp(19px, 5.5vw, 26px); }
+  .mc-q .blank { color: var(--accent); }
+  .mc-opts { flex: 1; display: flex; flex-direction: column; gap: 10px; padding-bottom: calc(4px + var(--safe-b)); }
+  .mc-opt {
+    flex: 1; min-height: 52px;
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 14px; font-size: 17px; font-weight: 600; cursor: pointer;
+    padding: 8px 14px; line-height: 1.3;
+  }
+  .mc-opt:active { transform: scale(0.99); }
+  .mc-opt.correct { background: var(--good); border-color: var(--good); color: #06210f; }
+  .mc-opt.wrong { background: #7a2323; border-color: #a13333; color: #ffd7d7; }
+  .mc-opt:disabled { cursor: default; }
+
+  /* Flashcard self-test */
+  .ft-card {
+    flex: 1; margin-bottom: 12px;
+    background: linear-gradient(160deg, var(--card), var(--card-2));
+    border: 1px solid var(--line); border-radius: 22px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 22px; cursor: pointer; user-select: none; overflow-y: auto;
+  }
+  .ft-front { font-size: clamp(30px, 9vw, 52px); font-weight: 800; line-height: 1.15; word-break: break-word; }
+  .ft-back { display: none; margin-top: 16px; }
+  .ft-card.flipped .ft-back { display: block; }
+  .ft-card.flipped .ft-hint { display: none; }
+  .ft-back .fb-ko { font-size: 22px; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+  .ft-back .fb-ex { background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 12px; margin: 8px 0; font-size: 15px; line-height: 1.4; text-align: left; }
+  .ft-hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
+  .ft-actions { flex: 0 0 auto; display: flex; gap: 10px; padding-bottom: calc(4px + var(--safe-b)); }
+  .ft-btn { flex: 1; min-height: var(--tap); border-radius: 14px; border: 1px solid var(--line);
+    font-size: 17px; font-weight: 800; cursor: pointer; }
+  .ft-btn.know { background: var(--good); border-color: var(--good); color: #06210f; }
+  .ft-btn.dunno { background: transparent; color: #ff8a8a; border-color: #a13333; }
+  .ft-btn:disabled { opacity: 0.4; }
+  .quiz-status {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 14px;
+    padding: 16px;
+    min-height: 0;
+  }
+  .q-phase {
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .q-phase.live { color: var(--accent); }
+  .q-ko {
+    font-size: clamp(24px, 7vw, 38px);
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1.25;
+    word-break: keep-all;
+  }
+  .q-heard { font-size: 16px; color: var(--muted); min-height: 24px; line-height: 1.4; }
+  .q-heard.correct { color: var(--good); font-weight: 700; }
+  .q-heard.wrong { color: #ff6f6f; font-weight: 700; }
+  .q-streak { font-size: 24px; letter-spacing: 6px; min-height: 30px; }
+
+  .big-btn {
+    flex: 0 0 46%;
+    border: none;
+    border-radius: 26px;
+    margin-top: 8px;
+    background: var(--good);
+    color: #06210f;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 22px;
+    font-weight: 800;
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .big-btn.running { background: var(--accent-2); color: #fff; }
+  .big-btn.paused  { background: var(--accent);   color: #fff; }
+  .big-btn:active  { filter: brightness(0.94); }
+  .big-btn .bb-icon { font-size: 60px; line-height: 1; }
+  .big-btn.playbar { flex: 0 0 40%; margin-top: 14px; }   /* driving button in study tab */
+  .big-btn.playbar .bb-icon { font-size: 52px; }
+  /* While playing, shrink to a compact bar so all 3 examples stay visible. */
+  .big-btn.playbar.compact { flex: 0 0 15%; min-height: 54px; flex-direction: row; gap: 12px; border-radius: 16px; }
+  .big-btn.playbar.compact .bb-icon { font-size: 28px; }
+  .big-btn.playbar.compact .bb-label { font-size: 16px; }
+
+  /* ---------- Modal ---------- */
+  .modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 24px;
+  }
+  .modal-card {
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 24px 22px calc(20px + var(--safe-b));
+    max-width: 440px;
+    width: 100%;
+    text-align: center;
+  }
+  .modal-emoji { font-size: 46px; }
+  .modal-card h2 { margin: 6px 0 10px; }
+  .modal-card p { color: var(--text); line-height: 1.55; font-size: 15px; margin: 8px 0; }
+  .modal-card .modal-sub { color: var(--muted); font-size: 13px; }
+  .modal-card .btn { width: 100%; margin-top: 12px; }
+  .btn.micgo { background: var(--good); border-color: var(--good); color: #06210f; }
+  .btn.ghost { background: transparent; color: var(--muted); }
+  .btn.small { min-height: 40px; font-size: 14px; padding: 0 14px; flex: 0 0 auto; }
+
+  /* ---------- Header buttons ---------- */
+  .hgroup { display: flex; align-items: center; gap: 8px; }
+  .iconbtn {
+    width: 40px; height: 40px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 11px;
+    font-size: 22px; line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .iconbtn:active { transform: scale(0.96); }
+
+  /* ---------- Quiz mode chips ---------- */
+  .qmode { display: flex; gap: 8px; margin-bottom: 8px; }
+  .qchip {
+    flex: 1; min-height: 42px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    border-radius: 11px;
+    font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .qchip[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* ---------- Full-screen sheets (Add / Settings) ---------- */
+  .sheet {
+    position: fixed; inset: 0; z-index: 40;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+  }
+  .sheet-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: calc(env(safe-area-inset-top,0px) + 12px) 14px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sheet-head h2 { margin: 0; font-size: 17px; }
+  .sheet-head span { width: 40px; }   /* balance the close button */
+  .sheet-body {
+    flex: 1; overflow-y: auto;
+    padding: 16px 16px calc(28px + var(--safe-b));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  textarea, .sheet-body input[type="password"] {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 16px;
+    font-family: inherit;
+    resize: vertical;
+    margin: 4px 0 12px;
+  }
+  .lbl { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 4px 0 8px; }
+  .warn { color: #ffcf6f; font-size: 13px; line-height: 1.5; margin: 4px 0 10px; }
+
+  /* Segmented control */
+  .seg, .seg-btn { }
+  .seg { display: flex; gap: 6px; background: var(--card); padding: 4px; border-radius: 12px; margin-bottom: 14px; }
+  .seg-btn {
+    flex: 1; min-height: 42px; border: none; border-radius: 9px;
+    background: transparent; color: var(--muted); font-size: 14px; font-weight: 700; cursor: pointer;
+  }
+  .seg-btn[aria-selected="true"] { background: var(--accent); color: #fff; }
+
+  .bulk-sep { text-align: center; color: var(--muted); font-size: 12px; margin: 20px 0 10px; }
+  .bulkbox .btn { width: 100%; }
+
+  .keybox { margin-bottom: 12px; }
+  .keybox summary { color: var(--accent); cursor: pointer; font-size: 14px; padding: 8px 0; }
+  #keyState { color: var(--good); font-size: 12px; }
+
+  /* Progress bar */
+  .prog { margin-top: 14px; }
+  .prog-bar { height: 10px; background: var(--card); border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+  .prog-fill { height: 100%; width: 0%; background: var(--good); transition: width 0.25s; }
+  .prog-txt { color: var(--muted); font-size: 13px; margin-top: 6px; text-align: center; }
+
+  /* Preview cards */
+  .prev-head { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; }
+  .prev-head span { font-weight: 700; }
+  .prev-card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 12px 14px; margin-bottom: 12px;
+  }
+  .prev-card.rejected { opacity: 0.45; }
+  .prev-card .pc-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .prev-card .pc-en { font-weight: 800; font-size: 17px; }
+  .prev-card .pc-toggle {
+    flex: 0 0 auto; min-height: 34px; padding: 0 12px; border-radius: 9px;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
+    font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .prev-card.rejected .pc-toggle { color: var(--good); border-color: var(--good); }
+  .prev-card input, .prev-card textarea {
+    width: 100%; background: var(--card-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 9px; padding: 8px 10px; font-size: 14px; font-family: inherit; margin: 4px 0;
+  }
+  .prev-card .pc-err { color: #ff6f6f; font-size: 13px; }
+
+  /* Settings rows */
+  .srow { margin-bottom: 18px; }
+  .srow label { display: block; font-size: 15px; margin-bottom: 8px; }
+  .srow label b { color: var(--accent); }
+  .srow input[type="range"] { width: 100%; accent-color: var(--accent); height: 28px; }
+  .hint2 { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .srow.switch { display: flex; align-items: center; justify-content: space-between; }
+  .srow.switch label { margin: 0; }
+  .toggle {
+    width: 52px; height: 30px; border-radius: 15px; border: none; cursor: pointer;
+    background: var(--line); position: relative; transition: background 0.2s;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px;
+    border-radius: 50%; background: #fff; transition: transform 0.2s;
+  }
+  .toggle[aria-checked="true"] { background: var(--good); }
+  .toggle[aria-checked="true"]::after { transform: translateX(22px); }
+  .sheet-body h3 { margin: 26px 0 6px; font-size: 15px; }
+  .sheet-body .btn { width: 100%; margin-top: 10px; }
+
+  /* ---------- Stats ---------- */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px 14px; text-align: center;
+  }
+  .tile .t-num { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1; }
+  .tile .t-lbl { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  .chart { display: flex; align-items: flex-end; gap: 8px; height: 130px; padding-top: 6px; }
+  .chart .bar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+  .chart .bar-fill {
+    width: 100%; max-width: 34px; background: var(--accent);
+    border-radius: 6px 6px 0 0; min-height: 3px; transition: height 0.3s;
+  }
+  .chart .bar-fill.today { background: var(--good); }
+  .chart .bar-cnt { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .bar-day { font-size: 11px; color: var(--muted); }
+
+  .wh-row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .wh-row .wh-en { font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wh-row .wh-num { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .wh-row .wh-pct { font-weight: 700; font-size: 14px; min-width: 46px; text-align: right; }
+  .wh-pct.good { color: var(--good); }
+  .wh-pct.mid { color: #ffcf6f; }
+  .wh-pct.low { color: #ff6f6f; }
+
+  /* ---------- Update banner ---------- */
+  .updatebar {
+    position: fixed; left: 12px; right: 12px;
+    bottom: calc(12px + var(--safe-b)); z-index: 60;
+    background: var(--accent); color: #fff;
+    border-radius: 12px; padding: 12px 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+    font-size: 14px; font-weight: 700;
+  }
+  .updatebar button {
+    flex: 0 0 auto; min-height: 40px; padding: 0 18px;
+    border: none; border-radius: 9px; background: #fff; color: var(--accent-2);
+    font-weight: 800; font-size: 14px; cursor: pointer;
+  }
+
+  .hidden { display: none !important; }
+</style>
+
+<header>
+  <h1>영어 단어장</h1>
+  <div class="hgroup">
+    <span class="count" id="count"></span>
+    <button class="iconbtn" id="btnStats" aria-label="통계">📊</button>
+    <button class="iconbtn" id="btnAdd" aria-label="단어 추가">＋</button>
+    <button class="iconbtn" id="btnSettings" aria-label="설정">⚙</button>
+  </div>
+</header>
+
+<div class="tabs" role="tablist">
+  <button class="tab" id="tab-study" role="tab" aria-selected="true">학습</button>
+  <button class="tab" id="tab-quiz"  role="tab" aria-selected="false">🎤 말하기</button>
+  <button class="tab" id="tab-done"  role="tab" aria-selected="false">외운 단어</button>
+</div>
+
+<main>
+  <!-- STUDY VIEW -->
+  <div id="view-study" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <div class="card" id="card">
+      <div class="kicker" id="progress">CARD</div>
+      <div class="center-wrap">
+        <div class="english" id="en">—</div>
+      </div>
+      <div class="hint">화면을 탭하면 뜻이 보여요 · Tap to reveal</div>
+      <div class="reveal">
+        <div class="korean" id="ko"></div>
+        <div class="ex-label">Examples</div>
+        <ul class="examples" id="examples"></ul>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn prev" id="prev" aria-label="Previous">‹</button>
+      <button class="btn memorize" id="memorize">외웠어요 ✓</button>
+      <button class="btn next" id="next" aria-label="Next">›</button>
+    </div>
+
+    <!-- Driving mode: hands-free continuous playback -->
+    <button class="big-btn playbar" id="playBtn">
+      <span class="bb-icon" id="playIcon">▶</span>
+      <span class="bb-label" id="playLabel">듣기 시작</span>
+    </button>
+  </div>
+
+  <!-- MEMORIZED VIEW -->
+  <div id="view-done" class="hidden" style="flex:1;">
+    <div class="list" id="doneList"></div>
+  </div>
+
+  <!-- QUIZ VIEW (voice / multiple-choice / flashcard) -->
+  <div id="view-quiz" class="hidden quiz-wrap">
+    <div class="qmode">
+      <button class="qchip" id="qmMic"   aria-selected="true">🎤 마이크</button>
+      <button class="qchip" id="qmSelf"  aria-selected="false">🔊 자가확인</button>
+      <button class="qchip" id="qmMC"    aria-selected="false">🔤 객관식</button>
+      <button class="qchip" id="qmFlash" aria-selected="false">🃏 플래시</button>
+    </div>
+
+    <!-- Voice modes (mic / self-check) -->
+    <div id="voiceView" class="subview">
+      <div class="quiz-status">
+        <div class="q-phase" id="qPhase">준비됨</div>
+        <div class="q-ko" id="qKo">아래 버튼을 눌러 말하기 퀴즈를 시작하세요</div>
+        <div class="q-heard" id="qHeard"></div>
+        <div class="q-streak" id="qStreak"></div>
+      </div>
+      <button class="big-btn" id="bigBtn">
+        <span class="bb-icon" id="bbIcon">▶</span>
+        <span class="bb-label" id="bbLabel">시작하기</span>
+      </button>
+    </div>
+
+    <!-- Multiple choice -->
+    <div id="mcView" class="subview hidden">
+      <div class="mc-score" id="mcScore"></div>
+      <div class="mc-q" id="mcQ"></div>
+      <div class="mc-opts" id="mcOpts"></div>
+    </div>
+
+    <!-- Flashcard self-test -->
+    <div id="ftView" class="subview hidden">
+      <div class="mc-score" id="ftScore"></div>
+      <div class="ft-card" id="ftCard">
+        <div class="ft-front" id="ftFront">—</div>
+        <div class="ft-back" id="ftBack"></div>
+        <div class="ft-hint" id="ftHint">탭하면 뜻이 보여요</div>
+      </div>
+      <div class="ft-actions" id="ftActions">
+        <button class="ft-btn dunno" id="ftDunno">몰라요</button>
+        <button class="ft-btn know" id="ftKnow">맞았어요 ✓</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- New-version update prompt -->
+<div id="updateBar" class="updatebar hidden">
+  <span>새 버전이 있어요 ✨</span>
+  <button id="updateReload">새로고침</button>
+</div>
+
+<!-- Mic permission intro (one-time) -->
+<div id="micModal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-emoji">🎤</div>
+    <h2>말하기 퀴즈</h2>
+    <p>한국어 뜻을 듣고 <b>영어 단어를 소리 내어</b> 말하면 채점해 드려요.
+       이를 위해 <b>마이크 권한</b>이 필요합니다.
+       브라우저가 물어보면 <b>허용 / Allow</b>을 눌러 주세요.</p>
+    <p class="modal-sub">운전 중에는 화면을 보지 말고 소리만 듣고 따라오세요.
+       손대지 않아도 다음 단어로 계속 넘어갑니다.</p>
+    <button class="btn micgo" id="micStart">시작하기</button>
+    <button class="btn ghost" id="micCancel">취소</button>
+  </div>
+</div>
+
+<!-- ADD WORDS (full-screen sheet) -->
+<div id="addSheet" class="sheet hidden">
+  <div class="sheet-head">
+    <button class="iconbtn" id="addClose" aria-label="닫기">✕</button>
+    <h2>단어 추가</h2>
+    <span></span>
+  </div>
+  <div class="sheet-body">
+    <div class="seg">
+      <button class="seg-btn" id="segAI" aria-selected="true">AI 생성</button>
+      <button class="seg-btn" id="segManual" aria-selected="false">직접 입력</button>
+    </div>
+
+    <!-- AI mode -->
+    <div id="modeAI">
+      <p class="lbl">영어 단어/숙어를 <b>한 줄에 하나씩</b> 붙여넣으세요. 뜻과 예문 3개를 AI가 만들어 줍니다.</p>
+      <textarea id="aiInput" rows="6" placeholder="hit the ceiling&#10;beat around the bush&#10;piece of cake"></textarea>
+      <details class="keybox">
+        <summary>Anthropic API 키 설정 <span id="keyState"></span></summary>
+        <p class="warn">⚠️ 키는 이 기기의 브라우저(localStorage)에만 저장됩니다. 이 파일/기기를 남과 공유하면 키가 노출될 수 있어요. 개인 기기에서만 쓰세요.</p>
+        <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off">
+        <p class="lbl" style="font-size:12px">모델: claude-haiku-4-5 (빠르고 저렴) · 단어당 약 ₩5 내외.</p>
+      </details>
+      <button class="btn micgo" id="genBtn">생성하기</button>
+      <div id="genProg" class="prog hidden">
+        <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+        <div class="prog-txt" id="progTxt"></div>
+      </div>
+
+      <div class="bulkbox">
+        <div class="bulk-sep">— 또는 파일로 대량 추가 —</div>
+        <p class="lbl">CSV/TXT: 영어 단어만(한 줄에 하나 → AI 생성) 또는 전체 행
+          <b>word,meaning,ex1,ex2,ex3</b> (또는 <b>word|meaning|…</b>). 중복은 건너뛰고,
+          진행 상황이 저장돼 중단 후 이어서 할 수 있어요.</p>
+        <button class="btn" id="csvBtn">📄 CSV/TXT 파일 선택</button>
+        <input type="file" id="csvFile" accept=".csv,.txt,text/csv,text/plain" class="hidden">
+        <button class="btn micgo hidden" id="bulkResume">▶ 이어서 하기</button>
+        <button class="btn ghost small hidden" id="bulkStop">중지 (나중에 이어서)</button>
+        <div id="bulkStatus" class="lbl"></div>
+      </div>
+    </div>
+
+    <!-- Manual mode -->
+    <div id="modeManual" class="hidden">
+      <p class="lbl">한 줄에 하나씩, <b>단어 | 뜻 | 예문1 | 예문2 | 예문3</b> 형식으로 붙여넣으세요.</p>
+      <textarea id="manualInput" rows="7" placeholder="piece of cake | 아주 쉬운 일 | The exam was a piece of cake. | Fixing it was a piece of cake. | For her, cooking is a piece of cake."></textarea>
+      <button class="btn micgo" id="parseBtn">미리보기</button>
+    </div>
+
+    <!-- Preview (shared by both modes) -->
+    <div id="previewWrap" class="hidden">
+      <div class="prev-head">
+        <span id="prevCount"></span>
+        <button class="btn ghost small" id="prevClear">지우기</button>
+      </div>
+      <div id="previewList"></div>
+      <button class="btn micgo" id="saveBtn">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS (full-screen sheet) -->
+<div id="setSheet" class="sheet hidden">
+  <div class="sheet-head">
+    <button class="iconbtn" id="setClose" aria-label="닫기">✕</button>
+    <h2>설정</h2>
+    <span></span>
+  </div>
+  <div class="sheet-body">
+    <div class="srow">
+      <label>말하기 속도 <b id="rateVal"></b></label>
+      <input type="range" id="setRate" min="0.5" max="1.3" step="0.05">
+    </div>
+    <div class="srow">
+      <label>대기 / 멈춤 시간 <b id="silVal"></b></label>
+      <input type="range" id="setSilence" min="4" max="10" step="1">
+      <span class="hint2">마이크 답 대기(퀴즈) · 자가확인 모드에서 정답 전 멈춤</span>
+    </div>
+    <div class="srow">
+      <label>단어당 반복 (자가확인) <b id="repVal"></b></label>
+      <input type="range" id="setRepeat" min="1" max="5" step="1">
+    </div>
+    <div class="srow switch">
+      <label>순서 섞기 (shuffle)</label>
+      <button class="toggle" id="setShuffle" role="switch"></button>
+    </div>
+
+    <h3>데이터</h3>
+    <p class="lbl">모든 단어와 진행 상황을 백업하세요.</p>
+    <button class="btn" id="exportBtn">내보내기 (JSON)</button>
+    <button class="btn" id="importBtn">가져오기 (JSON)</button>
+    <input type="file" id="importFile" accept="application/json,.json" class="hidden">
+
+    <h3>API 키</h3>
+    <input id="apiKey2" type="password" placeholder="sk-ant-..." autocomplete="off">
+    <p class="warn">⚠️ 이 기기에만 저장됩니다. 공유 금지.</p>
+  </div>
+</div>
+
+<!-- STATS (full-screen sheet) -->
+<div id="statSheet" class="sheet hidden">
+  <div class="sheet-head">
+    <button class="iconbtn" id="statClose" aria-label="닫기">✕</button>
+    <h2>통계</h2>
+    <span></span>
+  </div>
+  <div class="sheet-body">
+    <div class="tiles">
+      <div class="tile"><div class="t-num" id="stTotal">0</div><div class="t-lbl">전체 단어</div></div>
+      <div class="tile"><div class="t-num" id="stMem">0</div><div class="t-lbl">외운 단어</div></div>
+      <div class="tile"><div class="t-num" id="stWeek">0</div><div class="t-lbl">이번 주 추가</div></div>
+      <div class="tile"><div class="t-num" id="stStreak">0</div><div class="t-lbl">연속일 🔥</div></div>
+    </div>
+
+    <h3>최근 7일 학습</h3>
+    <div class="chart" id="chart7"></div>
+
+    <h3>단어별 기록</h3>
+    <p class="lbl" id="histEmpty">아직 퀴즈 기록이 없어요. 말하기 퀴즈를 해 보세요.</p>
+    <div id="wordHistory"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =========================================================================
+   Storage layer
+   One object, one localStorage key. Later loops extend `settings`/`words`
+   without touching the persistence code.
+   ========================================================================= */
+const STORAGE_KEY = "vocab.store.v1";
+
+const SEED_WORDS = [
+  {
+    en: "break the ice",
+    ko: "어색한 분위기를 깨다, 서먹함을 풀다",
+    ex: [
+      "He told a joke to break the ice at the meeting.",
+      "A simple question about hobbies can break the ice with a stranger.",
+      "Games are a fun way to break the ice on the first day of class."
+    ]
+  },
+  {
+    en: "hit the road",
+    ko: "출발하다, 길을 나서다",
+    ex: [
+      "It's getting late, so we should hit the road.",
+      "We hit the road early to avoid the traffic.",
+      "As soon as the meeting ended, I hit the road for home."
+    ]
+  },
+  {
+    en: "on the same page",
+    ko: "같은 생각이다, 의견이 일치하다",
+    ex: [
+      "Let's make sure we're all on the same page before we start.",
+      "After the call, the whole team was on the same page.",
+      "I want us to be on the same page about the budget."
+    ]
+  },
+  {
+    en: "call it a day",
+    ko: "(하던 일을) 그만 끝내다, 마무리하다",
+    ex: [
+      "We've done enough work, let's call it a day.",
+      "After eight hours of driving, we called it a day.",
+      "The rain got heavy, so the crew called it a day."
+    ]
+  },
+  {
+    en: "get the hang of",
+    ko: "요령을 익히다, 감을 잡다",
+    ex: [
+      "It took me a week to get the hang of the new software.",
+      "Don't worry, you'll get the hang of driving soon.",
+      "Once you get the hang of it, cooking is easy."
+    ]
+  },
+  {
+    en: "look forward to",
+    ko: "~을 기대하다, 고대하다",
+    ex: [
+      "I look forward to seeing you this weekend.",
+      "She's looking forward to her trip to Korea.",
+      "We look forward to hearing from you soon."
+    ]
+  },
+  {
+    en: "run out of",
+    ko: "~이 다 떨어지다, 바닥나다",
+    ex: [
+      "We ran out of milk, so I'll stop by the store.",
+      "The car ran out of gas on the highway.",
+      "I'm running out of time to finish this report."
+    ]
+  },
+  {
+    en: "make up one's mind",
+    ko: "결심하다, 마음을 정하다",
+    ex: [
+      "Take your time and make up your mind.",
+      "He finally made up his mind to change jobs.",
+      "I can't make up my mind about which car to buy."
+    ]
+  },
+  {
+    en: "keep an eye on",
+    ko: "~을 계속 지켜보다, 살펴보다",
+    ex: [
+      "Can you keep an eye on my bag for a minute?",
+      "Parents should keep an eye on young children near the pool.",
+      "Keep an eye on the road and don't get distracted."
+    ]
+  },
+  {
+    en: "under the weather",
+    ko: "몸이 안 좋은, 컨디션이 별로인",
+    ex: [
+      "I'm feeling a bit under the weather today.",
+      "She stayed home because she was under the weather.",
+      "If you're under the weather, get some rest."
+    ]
+  }
+];
+
+function makeId(word, i) {
+  // Stable id from the English text so imports/re-seeds don't duplicate.
+  return "w_" + word.en.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + i;
+}
+
+function defaultStore() {
+  return {
+    version: 1,
+    // New visitors start with an EMPTY list — they add their own words via ＋.
+    // (SEED_WORDS/makeId are kept below as a sample-format reference and easy re-enable.)
+    words: [],
+    activity: {},                         // "YYYY-MM-DD" -> quiz answers that day
+    archive: [],                          // words auto-deleted after 1wk memorized (never lost)
+    settings: {                   // user-tunable; see cfg() for defaults
+      rate: 0.95,                 // TTS speech rate
+      silence: 6,                 // voice-quiz mic wait / self-check pause (seconds)
+      repeat: 1,                  // self-check repeats per word
+      shuffle: false,
+      quizMode: "mic",            // "mic" | "selfcheck"
+      apiKey: ""                  // Anthropic key (client-side; see warning in UI)
+    },
+    ui: { index: 0 }              // current study position (into active list)
+  };
+}
+
+// Read a setting with a safe default, so stores saved by older versions still work.
+const CFG_DEFAULTS = { rate: 0.95, silence: 6, repeat: 1, shuffle: false, quizMode: "mic", apiKey: "" };
+function cfg(k) {
+  const v = store && store.settings ? store.settings[k] : undefined;
+  return v === undefined ? CFG_DEFAULTS[k] : v;
+}
+
+let store;
+
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.words)) return parsed;
+    }
+  } catch (e) {
+    console.warn("Load failed, reseeding:", e);
+  }
+  return defaultStore();
+}
+
+function save() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  } catch (e) {
+    console.warn("Save failed:", e);
+  }
+}
+
+/* =========================================================================
+   Selectors
+   ========================================================================= */
+const active = () => store.words.filter(w => !w.memorized);
+const memorized = () => store.words.filter(w => w.memorized);
+
+/* ---------- Stats / activity ---------- */
+function wstats(w) {                       // migrate-on-access so old words are safe
+  if (!w.stats) w.stats = { seen: 0, right: 0, wrong: 0 };
+  return w.stats;
+}
+function dateKey(d) {
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0");
+}
+function logActivity(n) {
+  if (!store.activity) store.activity = {};
+  const k = dateKey(new Date());
+  store.activity[k] = (store.activity[k] || 0) + (n || 1);
+}
+function currentStreak() {
+  const a = store.activity || {};
+  const d = new Date();
+  if (!(a[dateKey(d)] > 0)) d.setDate(d.getDate() - 1);  // today not required yet
+  let s = 0;
+  while (a[dateKey(d)] > 0) { s++; d.setDate(d.getDate() - 1); }
+  return s;
+}
+
+/* ---------- Auto-cleanup (>1000 words): archive long-memorized words ---------- */
+let autoCleanupDeclined = false;   // suppress re-prompting after a "no" this session
+function maybeAutoCleanup() {
+  if (autoCleanupDeclined) return;
+  if (store.words.length <= 1000) return;
+  const cutoff = Date.now() - 7 * 864e5;   // 1 week ago
+  const stale = store.words.filter(w => w.memorized && w.memorizedAt && w.memorizedAt <= cutoff);
+  if (!stale.length) return;
+
+  // Always confirm with the count — never delete silently.
+  const ok = confirm("외운 지 1주일 지난 단어 " + stale.length + "개를 삭제할까요?\n" +
+                     "(삭제된 단어는 다음 내보내기에 ‘보관(archive)’ 기록으로 포함돼 사라지지 않아요.)");
+  if (!ok) { autoCleanupDeclined = true; return; }
+
+  const now = Date.now();
+  const ids = new Set(stale.map(w => w.id));
+  if (!store.archive) store.archive = [];
+  stale.forEach(w => store.archive.push({
+    en: w.en, ko: w.ko, ex: (w.ex || []).slice(),
+    memorizedAt: w.memorizedAt || 0, archivedAt: now
+  }));
+  store.words = store.words.filter(w => !ids.has(w.id));
+  save();
+  if (mc.active) stopMC();     // clear any stale interactive-quiz round
+  if (ft.active) stopFlash();
+  render();
+  alert(stale.length + "개를 삭제하고 보관 기록에 저장했어요. (내보내기에 포함됩니다)");
+}
+
+function clampIndex() {
+  const n = active().length;
+  if (n === 0) { store.ui.index = 0; return; }
+  if (store.ui.index < 0) store.ui.index = n - 1;
+  if (store.ui.index >= n) store.ui.index = 0;
+}
+
+/* =========================================================================
+   DOM refs
+   ========================================================================= */
+const el = {
+  count: document.getElementById("count"),
+  tabStudy: document.getElementById("tab-study"),
+  tabQuiz: document.getElementById("tab-quiz"),
+  tabDone: document.getElementById("tab-done"),
+  viewStudy: document.getElementById("view-study"),
+  viewQuiz: document.getElementById("view-quiz"),
+  viewDone: document.getElementById("view-done"),
+  card: document.getElementById("card"),
+  progress: document.getElementById("progress"),
+  en: document.getElementById("en"),
+  ko: document.getElementById("ko"),
+  examples: document.getElementById("examples"),
+  prev: document.getElementById("prev"),
+  next: document.getElementById("next"),
+  memorize: document.getElementById("memorize"),
+  doneList: document.getElementById("doneList"),
+  // driving mode (study tab)
+  playBtn: document.getElementById("playBtn"),
+  playIcon: document.getElementById("playIcon"),
+  playLabel: document.getElementById("playLabel"),
+  // quiz
+  qPhase: document.getElementById("qPhase"),
+  qKo: document.getElementById("qKo"),
+  qHeard: document.getElementById("qHeard"),
+  qStreak: document.getElementById("qStreak"),
+  bigBtn: document.getElementById("bigBtn"),
+  bbIcon: document.getElementById("bbIcon"),
+  bbLabel: document.getElementById("bbLabel"),
+  micModal: document.getElementById("micModal"),
+  micStart: document.getElementById("micStart"),
+  micCancel: document.getElementById("micCancel"),
+  updateBar: document.getElementById("updateBar"),
+  updateReload: document.getElementById("updateReload"),
+  // header + mode chips
+  btnAdd: document.getElementById("btnAdd"),
+  btnSettings: document.getElementById("btnSettings"),
+  btnStats: document.getElementById("btnStats"),
+  // stats sheet
+  statSheet: document.getElementById("statSheet"),
+  statClose: document.getElementById("statClose"),
+  stTotal: document.getElementById("stTotal"),
+  stMem: document.getElementById("stMem"),
+  stWeek: document.getElementById("stWeek"),
+  stStreak: document.getElementById("stStreak"),
+  chart7: document.getElementById("chart7"),
+  histEmpty: document.getElementById("histEmpty"),
+  wordHistory: document.getElementById("wordHistory"),
+  qmMic: document.getElementById("qmMic"),
+  qmSelf: document.getElementById("qmSelf"),
+  qmMC: document.getElementById("qmMC"),
+  qmFlash: document.getElementById("qmFlash"),
+  voiceView: document.getElementById("voiceView"),
+  mcView: document.getElementById("mcView"),
+  mcScore: document.getElementById("mcScore"),
+  mcQ: document.getElementById("mcQ"),
+  mcOpts: document.getElementById("mcOpts"),
+  ftView: document.getElementById("ftView"),
+  ftScore: document.getElementById("ftScore"),
+  ftCard: document.getElementById("ftCard"),
+  ftFront: document.getElementById("ftFront"),
+  ftBack: document.getElementById("ftBack"),
+  ftHint: document.getElementById("ftHint"),
+  ftKnow: document.getElementById("ftKnow"),
+  ftDunno: document.getElementById("ftDunno"),
+  // add-words sheet
+  addSheet: document.getElementById("addSheet"),
+  addClose: document.getElementById("addClose"),
+  segAI: document.getElementById("segAI"),
+  segManual: document.getElementById("segManual"),
+  modeAI: document.getElementById("modeAI"),
+  modeManual: document.getElementById("modeManual"),
+  aiInput: document.getElementById("aiInput"),
+  apiKey: document.getElementById("apiKey"),
+  keyState: document.getElementById("keyState"),
+  genBtn: document.getElementById("genBtn"),
+  genProg: document.getElementById("genProg"),
+  progFill: document.getElementById("progFill"),
+  progTxt: document.getElementById("progTxt"),
+  manualInput: document.getElementById("manualInput"),
+  parseBtn: document.getElementById("parseBtn"),
+  csvBtn: document.getElementById("csvBtn"),
+  csvFile: document.getElementById("csvFile"),
+  bulkResume: document.getElementById("bulkResume"),
+  bulkStop: document.getElementById("bulkStop"),
+  bulkStatus: document.getElementById("bulkStatus"),
+  previewWrap: document.getElementById("previewWrap"),
+  prevCount: document.getElementById("prevCount"),
+  prevClear: document.getElementById("prevClear"),
+  previewList: document.getElementById("previewList"),
+  saveBtn: document.getElementById("saveBtn"),
+  // settings sheet
+  setSheet: document.getElementById("setSheet"),
+  setClose: document.getElementById("setClose"),
+  setRate: document.getElementById("setRate"),
+  rateVal: document.getElementById("rateVal"),
+  setSilence: document.getElementById("setSilence"),
+  silVal: document.getElementById("silVal"),
+  setRepeat: document.getElementById("setRepeat"),
+  repVal: document.getElementById("repVal"),
+  setShuffle: document.getElementById("setShuffle"),
+  exportBtn: document.getElementById("exportBtn"),
+  importBtn: document.getElementById("importBtn"),
+  importFile: document.getElementById("importFile"),
+  apiKey2: document.getElementById("apiKey2")
+};
+
+let currentTab = "study";
+let isOpen = false;   // whether the current card's back is revealed
+
+/* =========================================================================
+   Rendering
+   ========================================================================= */
+function render() {
+  const act = active();
+  const done = memorized();
+
+  el.count.textContent = `남은 ${act.length} · 외움 ${done.length}`;
+
+  // Tab visuals
+  el.tabStudy.setAttribute("aria-selected", String(currentTab === "study"));
+  el.tabQuiz.setAttribute("aria-selected", String(currentTab === "quiz"));
+  el.tabDone.setAttribute("aria-selected", String(currentTab === "done"));
+  el.viewStudy.classList.toggle("hidden", currentTab !== "study");
+  el.viewQuiz.classList.toggle("hidden", currentTab !== "quiz");
+  el.viewDone.classList.toggle("hidden", currentTab !== "done");
+
+  if (currentTab === "study") { renderStudy(act); updatePlayBtn(); }
+  else if (currentTab === "quiz") renderQuizView();
+  else renderDone(done);
+}
+
+function renderStudy(act) {
+  clampIndex();
+
+  if (act.length === 0) {
+    el.card.classList.remove("is-open");
+    el.progress.textContent = "";
+    el.en.innerHTML = "";
+    el.card.querySelector(".center-wrap").innerHTML = store.words.length === 0
+      ? '<div class="empty"><span class="big">📖</span>아직 단어가 없어요.<br>' +
+        '오른쪽 위 <b>＋</b> 를 눌러 단어를 추가하세요.<br>' +
+        '<span style="font-size:13px">Add words with the ＋ button.</span></div>'
+      : '<div class="empty"><span class="big">🎉</span>모든 단어를 외웠어요!<br>All words memorized.<br><br>' +
+        '위 <b>외운 단어</b> 탭에서 다시 볼 수 있어요.</div>';
+    el.card.querySelector(".hint").classList.add("hidden");
+    el.memorize.disabled = true;
+    el.memorize.style.opacity = 0.4;
+    return;
+  }
+
+  el.card.querySelector(".hint").classList.remove("hidden");
+  el.memorize.disabled = false;
+  el.memorize.style.opacity = 1;
+
+  // Restore the center-wrap in case the empty-state overwrote it.
+  const cw = el.card.querySelector(".center-wrap");
+  if (!document.getElementById("en") || el.en.parentNode !== cw) {
+    cw.innerHTML = '<div class="english" id="en">—</div>';
+    el.en = document.getElementById("en");
+  }
+
+  const w = act[store.ui.index];
+  el.progress.textContent = `${store.ui.index + 1} / ${act.length}`;
+  el.en.textContent = w.en;
+  el.ko.textContent = w.ko;
+  el.examples.innerHTML = "";
+  w.ex.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s;
+    el.examples.appendChild(li);
+  });
+
+  el.card.classList.toggle("is-open", isOpen);
+}
+
+function renderDone(done) {
+  el.doneList.innerHTML = "";
+  if (done.length === 0) {
+    el.doneList.innerHTML =
+      '<div class="empty"><span class="big">📚</span>아직 외운 단어가 없어요.<br>' +
+      'Tap <b>외웠어요 ✓</b> on a card to move it here.</div>';
+    return;
+  }
+  done.forEach(w => {
+    const row = document.createElement("div");
+    row.className = "list-item";
+
+    const info = document.createElement("div");
+    info.innerHTML = `<div class="en"></div><div class="ko"></div>`;
+    info.querySelector(".en").textContent = w.en;
+    info.querySelector(".ko").textContent = w.ko;
+
+    const undo = document.createElement("button");
+    undo.className = "undo";
+    undo.textContent = "되돌리기";
+    undo.addEventListener("click", () => unmark(w.id));
+
+    row.appendChild(info);
+    row.appendChild(undo);
+    el.doneList.appendChild(row);
+  });
+}
+
+/* =========================================================================
+   Actions
+   ========================================================================= */
+function toggleReveal() {
+  isOpen = !isOpen;
+  el.card.classList.toggle("is-open", isOpen);
+}
+
+function goNext(step) {
+  const n = active().length;
+  if (n === 0) return;
+  store.ui.index += step;
+  clampIndex();
+  isOpen = false;
+  save();
+  render();
+}
+
+function memorizeCurrent() {
+  const act = active();
+  if (act.length === 0) return;
+  const w = act[store.ui.index];
+  w.memorized = true;
+  w.memorizedAt = Date.now();
+  logActivity();
+  // Staying at the same index now shows the next card (list shrank).
+  clampIndex();
+  isOpen = false;
+  save();
+  render();
+}
+
+function unmark(id) {
+  const w = store.words.find(x => x.id === id);
+  if (w) { w.memorized = false; w.memorizedAt = 0; }
+  save();
+  render();
+}
+
+function switchTab(tab) {
+  // Leaving a tab stops its engine so audio never runs in the background / overlaps.
+  if (currentTab === "quiz" && tab !== "quiz") {
+    if (quiz.active) pauseQuiz();
+    if (mc.active) stopMC();
+    if (ft.active) stopFlash();
+  }
+  if (currentTab === "study" && tab !== "study" && play.active && !play.paused) pausePlay();
+  currentTab = tab;
+  render();
+}
+
+/* =========================================================================
+   Wiring
+   ========================================================================= */
+el.card.addEventListener("click", toggleReveal);
+el.prev.addEventListener("click", () => goNext(-1));
+el.next.addEventListener("click", () => goNext(1));
+el.memorize.addEventListener("click", (e) => { e.stopPropagation(); memorizeCurrent(); });
+el.tabStudy.addEventListener("click", () => switchTab("study"));
+el.tabQuiz.addEventListener("click", () => switchTab("quiz"));
+el.tabDone.addEventListener("click", () => switchTab("done"));
+
+// Swipe left/right on the card to move between words (mobile-friendly).
+let touchX = null, touchY = null;
+el.card.addEventListener("touchstart", (e) => {
+  touchX = e.changedTouches[0].clientX;
+  touchY = e.changedTouches[0].clientY;
+}, { passive: true });
+el.card.addEventListener("touchend", (e) => {
+  if (touchX === null) return;
+  const dx = e.changedTouches[0].clientX - touchX;
+  const dy = e.changedTouches[0].clientY - touchY;
+  if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    goNext(dx < 0 ? 1 : -1);   // swipe left = next
+  }
+  touchX = touchY = null;
+});
+
+/* =========================================================================
+   VOICE QUIZ (hands-free)  —  TTS (SpeechSynthesis) + STT (SpeechRecognition)
+   State machine: speak Korean -> listen for English -> grade -> advance.
+   Everything is guarded by quiz.gen so Pause/tab-switch cleanly aborts
+   any in-flight speak/listen without leaving a zombie loop running.
+   ========================================================================= */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+
+const quiz = {
+  active: false,     // engine loop is running
+  paused: false,     // user paused (or auto-paused on tab switch)
+  resumable: false,  // a saved session is waiting to continue (after app restart)
+  queue: [],         // ordered word ids for this pass (supports shuffle)
+  qpos: 0,           // position into queue
+  gen: 0,            // generation token; bumped to abort in-flight async steps
+  streak: {},        // wordId -> consecutive-correct count (runtime only)
+  recog: null,       // live SpeechRecognition instance
+  phase: "idle"      // idle | speaking | listening | answer | correct | wrong | suggest | denied | unsupported | done
+};
+
+// Driving-mode engine (TTS-only), independent of the voice quiz so audio never overlaps.
+const play = {
+  active: false,
+  paused: false,
+  resumable: false,   // saved session waiting to continue (after app restart)
+  queue: [],
+  qpos: 0,
+  gen: 0
+};
+
+// Build the play order for one pass through the active words (shuffled if enabled).
+function shuffleArr(a) {
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+// Queue helpers are generic over an engine ({queue, qpos}) — shared by quiz and driving mode.
+function buildQueueFor(eng) {
+  let ids = active().map(w => w.id);
+  if (cfg("shuffle")) ids = shuffleArr(ids);
+  eng.queue = ids;
+  eng.qpos = 0;
+}
+// Word at the engine's current position, skipping memorized ones, rebuilding a fresh
+// pass when exhausted (this is what makes driving mode loop forever).
+function nextWordFor(eng) {
+  let guard = 0;
+  while (guard++ < 4) {
+    while (eng.qpos < eng.queue.length) {
+      const w = store.words.find(x => x.id === eng.queue[eng.qpos] && !x.memorized);
+      if (w) return w;
+      eng.qpos++;
+    }
+    if (active().length === 0) return null;
+    buildQueueFor(eng);
+  }
+  return null;
+}
+// Backward-compatible wrappers used by the voice quiz.
+function buildQueue() { buildQueueFor(quiz); }
+function nextWord() { return nextWordFor(quiz); }
+
+/* ---------- Voices ---------- */
+let VOICES = [];
+function loadVoices() { try { VOICES = speechSynthesis.getVoices() || []; } catch (e) {} }
+loadVoices();
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = loadVoices;
+
+function pickVoice(lang) {
+  const pre = lang.slice(0, 2).toLowerCase();
+  // Prefer a local (offline) voice for the language, else any matching, else null.
+  return VOICES.find(v => v.lang.toLowerCase().startsWith(pre) && v.localService) ||
+         VOICES.find(v => v.lang.toLowerCase().startsWith(pre)) || null;
+}
+
+/* ---------- TTS: speak() returns a promise resolving when speech ends ---------- */
+function speak(text, lang, rate) {
+  rate = rate || cfg("rate");
+  return new Promise((resolve) => {
+    if (!("speechSynthesis" in window) || !text) { resolve(); return; }
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; resolve(); };
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang;
+      u.rate = rate;
+      const v = pickVoice(lang);
+      if (v) u.voice = v;
+      u.onend = done;
+      u.onerror = done;
+      speechSynthesis.speak(u);
+      // Safety net: iOS sometimes never fires onend after a cancel().
+      const est = 1200 + text.length * 90;
+      setTimeout(done, est);
+    } catch (e) { done(); }
+  });
+}
+
+/* ---------- Success chime via WebAudio (no external file) ---------- */
+let audioCtx = null;
+function ensureAudio() {
+  if (audioCtx) return;
+  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+}
+function playSuccess() {
+  return new Promise((resolve) => {
+    ensureAudio();
+    if (!audioCtx) { resolve(); return; }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    [[880, 0], [1318, 0.11]].forEach(([f, dt]) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      o.connect(g); g.connect(audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, t0 + dt);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + dt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.17);
+      o.start(t0 + dt); o.stop(t0 + dt + 0.2);
+    });
+    setTimeout(resolve, 340);
+  });
+}
+
+/* ---------- STT: listen() resolves with {transcript, alternatives} or {timeout|error} ---------- */
+function listen(lang, timeoutMs) {
+  return new Promise((resolve) => {
+    if (!SR) { resolve({ error: "unsupported" }); return; }
+    let settled = false;
+    const r = new SR();
+    quiz.recog = r;
+    r.lang = lang;
+    r.interimResults = false;
+    r.maxAlternatives = 4;
+    r.continuous = false;
+
+    const finish = (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { r.onresult = r.onerror = r.onend = null; r.stop(); } catch (e) {}
+      if (quiz.recog === r) quiz.recog = null;
+      resolve(res);
+    };
+    const timer = setTimeout(() => finish({ timeout: true }), timeoutMs);
+
+    r.onresult = (e) => {
+      const alts = [];
+      const res0 = e.results[0];
+      for (let i = 0; i < res0.length; i++) alts.push(res0[i].transcript);
+      finish({ transcript: alts[0] || "", alternatives: alts });
+    };
+    r.onerror = (e) => finish({ error: e.error || "error" });
+    r.onend = () => finish({ ended: true });
+
+    try { r.start(); } catch (e) { finish({ error: "startfail" }); }
+  });
+}
+
+function stopRecog() {
+  if (quiz.recog) { try { quiz.recog.abort(); } catch (e) {} quiz.recog = null; }
+}
+
+/* ---------- Fuzzy answer matching ---------- */
+function normalize(s) {
+  return String(s).toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .replace(/\b(a|an|the)\b/g, " ")   // ignore articles
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function toTokens(s) { return normalize(s).split(" ").filter(Boolean); }
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0]; dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+// A spoken word "matches" a target word if it's equal or a close mispronunciation.
+function wordMatches(said, target) {
+  if (said === target) return true;
+  const tol = target.length <= 4 ? 1 : 2;   // allow more slack on longer words
+  return levenshtein(said, target) <= tol;
+}
+// Grade one candidate transcript against the correct answer.
+function isCorrect(transcript, answer) {
+  const said = toTokens(transcript);
+  const want = toTokens(answer);
+  if (!want.length || !said.length) return false;
+  let matched = 0;
+  want.forEach(w => { if (said.some(s => wordMatches(s, w))) matched++; });
+  if (want.length === 1) return matched === 1;      // single word must be right
+  return matched / want.length >= 0.6;              // idiom: most key words spoken
+}
+function anyCorrect(res, answer) {
+  const cands = res.alternatives || (res.transcript ? [res.transcript] : []);
+  return cands.some(c => isCorrect(c, answer));
+}
+// Classify a listen() result so we can retry hard failures instead of erroring on each.
+//   ok          -> got a transcript, grade it
+//   silence     -> user simply didn't answer (timeout / no-speech / ended) — normal
+//   unsupported -> recognition not available at all
+//   hard        -> a real recognition failure worth retrying (mic, network, permission…)
+function classifyListen(res) {
+  if (res.transcript !== undefined) return "ok";
+  if (res.error === "unsupported") return "unsupported";
+  if (res.timeout || res.ended || res.error === "no-speech") return "silence";
+  // Permission / hardware failures never recover on retry AND re-open the browser's
+  // permission popup each time recognition restarts — so switch away immediately, don't retry.
+  if (res.error === "not-allowed" || res.error === "service-not-allowed" || res.error === "audio-capture")
+    return "blocked";
+  return "hard";   // transient (network, aborted, startfail, …) — safe to retry a couple times
+}
+// Detect a "yes" confirmation in Korean or English (recognition set to ko-KR).
+function isYes(transcript) {
+  return /(네|예|응|어|그래|맞아|좋아|저장|yes|yeah|yep|okay|ok|예스)/i.test(String(transcript));
+}
+
+/* ---------- Quiz rendering ---------- */
+function streakDots(id) {
+  const n = Math.min(3, quiz.streak[id] || 0);
+  return "●".repeat(n) + "○".repeat(3 - n);
+}
+function setQuiz(phase, ko, heard, heardClass, streakId) {
+  quiz.phase = phase;
+  el.qPhase.textContent = {
+    speaking: "듣는 중… (뜻)", listening: "🎙 말하세요", answer: "정답 듣기", correct: "정답!",
+    wrong: "정답 알려드릴게요", suggest: "외웠나요?", denied: "마이크 권한 필요",
+    unsupported: "지원 안 됨", done: "완료", idle: "준비됨"
+  }[phase] || "";
+  el.qPhase.classList.toggle("live", phase === "listening");
+  if (ko !== undefined) el.qKo.textContent = ko;
+  el.qHeard.className = "q-heard" + (heardClass ? " " + heardClass : "");
+  el.qHeard.textContent = heard || "";
+  el.qStreak.textContent = streakId ? streakDots(streakId) : "";
+  updateBigBtn();
+}
+function updateBigBtn() {
+  el.bigBtn.classList.remove("running", "paused");
+  if (quiz.active && !quiz.paused) {
+    el.bigBtn.classList.add("running");
+    el.bbIcon.textContent = "⏸"; el.bbLabel.textContent = "일시정지";
+  } else if (quiz.paused || quiz.resumable) {
+    el.bigBtn.classList.add("paused");
+    el.bbIcon.textContent = "▶"; el.bbLabel.textContent = "이어서 계속";
+  } else {
+    el.bbIcon.textContent = "▶"; el.bbLabel.textContent = "시작하기";
+  }
+}
+// Shown when the quiz tab is opened but the engine isn't running.
+function renderQuizIdleIfStopped() {
+  updateModeChips();
+  if (quiz.active) { updateBigBtn(); return; }
+  const self = cfg("quizMode") === "selfcheck";
+  if (!self && !SR) {
+    setQuiz("unsupported", "이 브라우저는 음성 인식을 지원하지 않아요. 위 “자가확인” 모드를 쓰거나 Chrome/Safari에서 열어 주세요.", "");
+    return;
+  }
+  if (active().length === 0) {
+    setQuiz("done", store.words.length === 0
+      ? "아직 단어가 없어요. 학습 탭의 ＋ 로 단어를 추가하세요."
+      : "모든 단어를 외웠어요! 🎉", "");
+    return;
+  }
+  setQuiz("idle", self
+    ? "자가확인: 뜻을 들려주고 → 잠시 멈춘 뒤 → 정답을 들려드려요. 버튼을 누르세요."
+    : "아래 버튼을 눌러 말하기 퀴즈를 시작하세요", "");
+}
+
+function updateModeChips() {
+  const m = cfg("quizMode");
+  el.qmMic.setAttribute("aria-selected", String(m === "mic"));
+  el.qmSelf.setAttribute("aria-selected", String(m === "selfcheck"));
+  el.qmMC.setAttribute("aria-selected", String(m === "mc"));
+  el.qmFlash.setAttribute("aria-selected", String(m === "flash"));
+}
+
+// Route the quiz view to the sub-view for the current mode.
+function renderQuizView() {
+  updateModeChips();
+  const m = cfg("quizMode");
+  const voice = (m === "mic" || m === "selfcheck");
+  el.voiceView.classList.toggle("hidden", !voice);
+  el.mcView.classList.toggle("hidden", m !== "mc");
+  el.ftView.classList.toggle("hidden", m !== "flash");
+  if (voice) renderQuizIdleIfStopped();
+  else if (m === "mc") { if (!mc.active) startMC(); else renderMC(); }
+  else if (m === "flash") { if (!ft.active) startFlash(); else renderFlash(); }
+}
+
+/* ---------- Screen Wake Lock (driving / self-check hands-free) ---------- */
+let wakeLock = null;
+async function acquireWake() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    }
+  } catch (e) { /* denied / unsupported — app still works */ }
+}
+function releaseWake() {
+  try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+}
+
+/* ---------- Engine control ---------- */
+function warmUpAudio() {
+  // Must run inside the user-gesture handler to unlock TTS/WebAudio on iOS.
+  ensureAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0; speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+function onBigBtn() {
+  if (quiz.active && !quiz.paused) { pauseQuiz(); return; }   // running → pause
+
+  // Starting or resuming from here.
+  if (active().length === 0) { renderQuizIdleIfStopped(); return; }
+  if (cfg("quizMode") === "mic") {           // mic mode needs recognition + permission
+    if (!SR) { renderQuizIdleIfStopped(); return; }
+    if (!store.settings.micIntroSeen) { el.micModal.classList.remove("hidden"); return; }
+  }
+  if (quiz.paused || quiz.resumable) resumeQuiz();
+  else beginQuiz();
+}
+
+function resumeQuiz() {
+  quiz.paused = false;
+  quiz.resumable = false;
+  quiz.active = true;
+  acquireWake();
+  warmUpAudio();
+  runQuiz();               // continues from the saved quiz.queue / quiz.qpos
+}
+
+function beginQuiz() {
+  warmUpAudio();
+  quiz.active = true;
+  quiz.paused = false;
+  quiz.resumable = false;
+  buildQueue();
+  acquireWake();
+  runQuiz();
+}
+
+// Persist enough to resume the exact spot after the app is closed mid-session.
+function persistSession() {
+  store.ui.quiz = { paused: true, queue: quiz.queue.slice(), qpos: quiz.qpos, mode: cfg("quizMode") };
+  save();
+}
+function clearSession() {
+  if (store.ui) store.ui.quiz = null;
+  save();
+}
+
+function pauseQuiz() {
+  quiz.paused = true;        // engine stays "active" but paused (resumable)
+  quiz.gen++;                // abort any in-flight speak/listen
+  try { speechSynthesis.cancel(); } catch (e) {}
+  stopRecog();
+  releaseWake();
+  persistSession();
+  updateBigBtn();
+  el.qPhase.classList.remove("live");
+}
+
+function stopQuiz() {
+  quiz.active = false;
+  quiz.paused = false;
+  quiz.resumable = false;
+  quiz.gen++;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  stopRecog();
+  releaseWake();
+  clearSession();
+}
+
+/* ---------- The loop ---------- */
+async function runQuiz() {
+  const myGen = ++quiz.gen;
+  const alive = () => quiz.active && !quiz.paused && quiz.gen === myGen;
+  if (!quiz.queue.length) buildQueue();
+
+  while (alive()) {
+    if (active().length === 0) {
+      stopQuiz();
+      setQuiz("done", "모든 단어를 외웠어요! 🎉", "");
+      await speak("모두 외웠어요. 잘했어요!", "ko-KR");
+      return;
+    }
+    const w = nextWord();
+    if (!w) { buildQueue(); continue; }
+
+    if (cfg("quizMode") === "selfcheck") {
+      // ---- Self-check (no microphone): 뜻 → pause → 정답, repeated ----
+      const reps = Math.max(1, cfg("repeat"));
+      setQuiz("speaking", w.ko, "🔊 뜻을 듣고 정답을 떠올려 보세요", "", w.id);
+      await speak(w.ko, "ko-KR");
+      if (!alive()) return;
+      for (let i = 0; i < reps; i++) {
+        setQuiz("answer", w.ko, "정답: " + w.en + (reps > 1 ? "  (" + (i + 1) + "/" + reps + ")" : ""), "correct", w.id);
+        await pauseFor(cfg("silence") * 1000, alive);   // gap to answer in your head
+        if (!alive()) return;
+        await speak(w.en, "en-US");
+        if (!alive()) return;
+      }
+      wstats(w).seen++;
+      logActivity();
+      save();
+      quiz.qpos++;
+      continue;
+    }
+
+    // ---- Mic mode: 뜻 → listen → grade ----
+    setQuiz("speaking", w.ko, "", "", w.id);
+    await speak(w.ko, "ko-KR");
+    if (!alive()) return;
+
+    setQuiz("listening", w.ko, "🎧 …", "", w.id);
+    let res = null, hardTries = 0, giveUp = false;
+    while (alive()) {
+      res = await listen("en-US", cfg("silence") * 1000);
+      if (!alive()) return;
+      if (res.error === "unsupported") { stopQuiz(); renderQuizIdleIfStopped(); return; }
+      const cls = classifyListen(res);
+      if (cls === "blocked") { giveUp = true; break; }   // don't retry → no repeat popup
+      if (cls !== "hard") break;                          // ok / silence → go grade it
+      hardTries++;
+      if (hardTries <= 2) {                                // retry transient failures silently — no UI
+        setQuiz("listening", w.ko, "🎧 다시 듣는 중…", "", w.id);
+        await pauseFor(350, alive);
+        continue;
+      }
+      giveUp = true; break;                                // still failing → fall back
+    }
+    if (!alive()) return;
+
+    // Persistent recognition failure: announce once by voice, auto-switch to self-check,
+    // and keep going from the same word (no popup, no error loop).
+    if (giveUp) {
+      setQuiz("wrong", w.ko, "음성 인식 실패 → 자가확인 모드로 전환", "wrong", w.id);
+      await speak("음성 인식이 계속 안돼서, 자가확인 모드로 바꿀게요.", "ko-KR");
+      if (!alive()) return;
+      store.settings.quizMode = "selfcheck";
+      save();
+      updateModeChips();
+      continue;                                   // same word replays in self-check mode
+    }
+
+    const heard = res.transcript || "";
+    const st = wstats(w);
+    st.seen++;
+    logActivity();
+    if (anyCorrect(res, w.en)) {
+      st.right++;
+      quiz.streak[w.id] = (quiz.streak[w.id] || 0) + 1;
+      setQuiz("correct", w.ko, "“" + heard + "”  ✓", "correct", w.id);
+      await playSuccess();
+      if (!alive()) { save(); return; }
+      await speak("맞았어요", "ko-KR");
+      if (!alive()) { save(); return; }
+
+      if ((quiz.streak[w.id] || 0) >= 3) {
+        const yes = await suggestMemorize(w, myGen);
+        if (!alive()) { save(); return; }
+        quiz.streak[w.id] = 0;
+        if (yes) {
+          w.memorized = true;
+          w.memorizedAt = Date.now();
+          save();
+          renderCountOnly();
+          continue;             // memorized word will be skipped by nextWord()
+        }
+      }
+      save();
+      quiz.qpos++;
+    } else {
+      st.wrong++;
+      quiz.streak[w.id] = 0;
+      setQuiz("wrong", w.ko, heard ? "“" + heard + "”  ✗" : "(못 들었어요)", "wrong", w.id);
+      save();
+      await speak("정답은", "ko-KR");
+      if (!alive()) return;
+      await speak(w.en, "en-US");
+      if (!alive()) return;
+      quiz.qpos++;
+    }
+  }
+}
+
+// Interruptible delay — resolves early if the quiz is paused/aborted.
+function pauseFor(ms, alive) {
+  return new Promise((resolve) => {
+    let elapsed = 0;
+    const step = 100;
+    const iv = setInterval(() => {
+      elapsed += step;
+      if (!alive() || elapsed >= ms) { clearInterval(iv); resolve(); }
+    }, step);
+  });
+}
+
+// Ask (verbally) whether to mark the word memorized; listen for yes/네.
+async function suggestMemorize(w, myGen) {
+  const alive = () => quiz.active && !quiz.paused && quiz.gen === myGen;
+  setQuiz("suggest", "세 번 연속 정답! “" + w.en + "”", "외웠으면 “네”라고 말하세요", "", w.id);
+  await speak("세 번 연속 맞혔어요. 외운 단어로 표시할까요? 네, 라고 말하세요.", "ko-KR");
+  if (!alive()) return false;
+  const res = await listen("ko-KR", 4500);
+  if (!alive()) return false;
+  const yes = isYes(res.transcript || "");   // any recognition error → treated as "no"
+  if (yes) await speak("외운 단어로 옮겼어요", "ko-KR");
+  return yes;
+}
+
+// Update just the header counter without disturbing the quiz status area.
+function renderCountOnly() {
+  el.count.textContent = `남은 ${active().length} · 외움 ${memorized().length}`;
+}
+
+/* ---------- Quiz wiring ---------- */
+el.bigBtn.addEventListener("click", onBigBtn);
+el.micStart.addEventListener("click", () => {
+  store.settings.micIntroSeen = true;
+  save();
+  el.micModal.classList.add("hidden");
+  beginQuiz();
+});
+el.micCancel.addEventListener("click", () => el.micModal.classList.add("hidden"));
+
+function stopAllQuizEngines() {
+  if (quiz.active) stopQuiz();     // voice
+  if (mc.active) stopMC();
+  if (ft.active) stopFlash();
+}
+function setQuizMode(mode) {
+  if (cfg("quizMode") === mode) return;
+  stopAllQuizEngines();            // switching mode ends the current engine cleanly
+  store.settings.quizMode = mode;
+  save();
+  renderQuizView();
+}
+el.qmMic.addEventListener("click", () => setQuizMode("mic"));
+el.qmSelf.addEventListener("click", () => setQuizMode("selfcheck"));
+el.qmMC.addEventListener("click", () => setQuizMode("mc"));
+el.qmFlash.addEventListener("click", () => setQuizMode("flash"));
+
+// If the page is hidden (screen off / app switch), pause to avoid talking to nobody.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) return;
+  if (quiz.active && !quiz.paused) pauseQuiz();
+  if (play.active && !play.paused) pausePlay();
+});
+
+/* =========================================================================
+   INTERACTIVE QUIZ  —  4-option multiple choice + flashcard self-test
+   Tap-based (no audio). Both update per-word stats and log daily activity.
+   ========================================================================= */
+const mc = { active: false, timer: null, roundLeft: [], score: { right: 0, wrong: 0 }, locked: false };
+const ft = { active: false, weights: {}, cur: null, flipped: false, score: { right: 0, wrong: 0 } };
+
+function mcEmpty(need2) {
+  el.mcScore.textContent = "";
+  el.mcOpts.innerHTML = "";
+  el.mcQ.className = "mc-q";
+  el.mcQ.innerHTML = '<div class="empty" style="margin:auto">' +
+    (store.words.length === 0
+      ? "아직 단어가 없어요.<br>학습 탭의 ＋ 로 추가하세요."
+      : (need2 ? "객관식은 단어가 2개 이상 필요해요." : "모든 단어를 외웠어요! 🎉")) + "</div>";
+}
+
+/* ---------- Multiple choice ---------- */
+function startMC() {
+  stopMC();
+  mc.active = true;
+  mc.score = { right: 0, wrong: 0 };
+  buildMCRound();
+  nextMC();
+}
+function stopMC() {
+  mc.active = false;
+  if (mc.timer) { clearTimeout(mc.timer); mc.timer = null; }
+  mc.locked = false;
+}
+function buildMCRound() { mc.roundLeft = shuffleArr(active().map(w => w.id)); }
+function renderMC() {
+  // Re-entry (returning to the tab mid-round): only draw if nothing is shown.
+  if (mc.active && el.mcOpts.children.length === 0 && !mc.locked) nextMC();
+}
+function nextMC() {
+  if (!mc.active) return;
+  mc.locked = false;
+  const act = active();
+  if (act.length < 2) { mcEmpty(act.length > 0); return; }
+
+  let w = null;
+  while (mc.roundLeft.length) {
+    w = act.find(x => x.id === mc.roundLeft.shift());
+    if (w) break;
+  }
+  if (!w) { buildMCRound(); nextMC(); return; }   // round done → reshuffle, keep going
+
+  el.mcScore.textContent = "이번 라운드  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
+
+  // Type A: word → pick meaning.  Type B: example with blank → pick word.
+  const exs = (w.ex || []).filter(Boolean);
+  const type = (exs.length && Math.random() < 0.5) ? "B" : "A";
+  let correct, field;
+  if (type === "A") {
+    correct = w.ko; field = "ko";
+    el.mcQ.className = "mc-q word";
+    el.mcQ.textContent = w.en;
+  } else {
+    correct = w.en; field = "en";
+    el.mcQ.className = "mc-q sentence";
+    el.mcQ.innerHTML = blankOut(exs[Math.floor(Math.random() * exs.length)], w.en);
+  }
+
+  // Distractors drawn from other words.
+  const opts = [correct];
+  for (const x of shuffleArr(act.filter(x => x.id !== w.id))) {
+    const v = x[field];
+    if (v && !opts.includes(v)) opts.push(v);
+    if (opts.length >= 4) break;
+  }
+  el.mcOpts.innerHTML = "";
+  shuffleArr(opts).forEach(val => {
+    const b = document.createElement("button");
+    b.className = "mc-opt";
+    b.textContent = val;
+    b.addEventListener("click", () => onMCPick(b, val, correct, w));
+    el.mcOpts.appendChild(b);
+  });
+}
+function blankOut(sentence, word) {
+  const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const re = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  return re.test(sentence)
+    ? esc(sentence).replace(re, '<span class="blank">____</span>')
+    : esc(sentence) + '  <span class="blank">(____)</span>';
+}
+function onMCPick(btn, chosen, correct, w) {
+  if (mc.locked) return;
+  mc.locked = true;
+  const right = chosen === correct;
+  const st = wstats(w); st.seen++; logActivity();
+  if (right) { st.right++; mc.score.right++; } else { st.wrong++; mc.score.wrong++; }
+  save();
+  Array.from(el.mcOpts.children).forEach(b => {
+    b.disabled = true;
+    if (b.textContent === correct) b.classList.add("correct");
+    else if (b === btn && !right) b.classList.add("wrong");
+  });
+  el.mcScore.textContent = (right ? "정답! " : "오답 ✗ ") + "  ✓ " + mc.score.right + " · ✗ " + mc.score.wrong;
+  mc.timer = setTimeout(() => { mc.timer = null; nextMC(); }, right ? 750 : 1500);
+}
+
+/* ---------- Flashcard self-test (weighted repeat of missed words) ---------- */
+function startFlash() {
+  stopFlash();
+  ft.active = true;
+  ft.weights = {};
+  ft.score = { right: 0, wrong: 0 };
+  nextFlash();
+}
+function stopFlash() { ft.active = false; ft.cur = null; ft.flipped = false; }
+function ftWeight(id) { return ft.weights[id] || 1; }
+function pickFlashWord() {
+  const act = active();
+  if (!act.length) return null;
+  let pool = act;
+  if (ft.cur && act.length > 1) pool = act.filter(w => w.id !== ft.cur.id);  // avoid instant repeat
+  let total = 0; pool.forEach(w => total += ftWeight(w.id));
+  let r = Math.random() * total;
+  for (const w of pool) { r -= ftWeight(w.id); if (r <= 0) return w; }
+  return pool[pool.length - 1];
+}
+function nextFlash() {
+  if (!ft.active) return;
+  ft.cur = pickFlashWord();
+  ft.flipped = false;
+  renderFlash();
+}
+function renderFlash() {
+  el.ftScore.textContent = "✓ " + ft.score.right + " · ✗ " + ft.score.wrong;
+  const w = ft.cur;
+  if (!w) {
+    el.ftCard.classList.remove("flipped");
+    el.ftBack.innerHTML = "";
+    el.ftHint.classList.add("hidden");
+    el.ftFront.innerHTML = store.words.length === 0
+      ? '📖<br><span style="font-size:15px">아직 단어가 없어요. ＋ 로 추가하세요.</span>'
+      : '🎉<br><span style="font-size:15px">모든 단어를 외웠어요!</span>';
+    el.ftKnow.disabled = el.ftDunno.disabled = true;
+    return;
+  }
+  el.ftKnow.disabled = el.ftDunno.disabled = false;
+  el.ftHint.classList.remove("hidden");
+  el.ftFront.textContent = w.en;
+  el.ftCard.classList.toggle("flipped", ft.flipped);
+  const exs = (w.ex || []).filter(Boolean);
+  el.ftBack.innerHTML = '<div class="fb-ko"></div>' + exs.map(() => '<div class="fb-ex"></div>').join("");
+  el.ftBack.querySelector(".fb-ko").textContent = w.ko;
+  el.ftBack.querySelectorAll(".fb-ex").forEach((n, i) => { n.textContent = exs[i]; });
+}
+function flipFlash() {
+  if (!ft.active || !ft.cur) return;
+  ft.flipped = !ft.flipped;
+  el.ftCard.classList.toggle("flipped", ft.flipped);
+}
+function answerFlash(known) {
+  if (!ft.active || !ft.cur) return;
+  const w = ft.cur, st = wstats(w);
+  st.seen++; logActivity();
+  if (known) { st.right++; ft.score.right++; ft.weights[w.id] = Math.max(1, ftWeight(w.id) - 1); }
+  else       { st.wrong++; ft.score.wrong++; ft.weights[w.id] = Math.min(6, ftWeight(w.id) + 2); }
+  save();
+  nextFlash();     // missed words carry higher weight → surface more often
+}
+el.ftCard.addEventListener("click", flipFlash);
+el.ftKnow.addEventListener("click", (e) => { e.stopPropagation(); answerFlash(true); });
+el.ftDunno.addEventListener("click", (e) => { e.stopPropagation(); answerFlash(false); });
+
+/* =========================================================================
+   DRIVING MODE  —  continuous hands-free playback (TTS only, no microphone)
+   Reads each word: English → Korean → all examples, repeated per settings,
+   looping through non-memorized words forever. Pause/resume survives app close.
+   ========================================================================= */
+function updatePlayBtn() {
+  if (!el.playBtn) return;
+  const none = active().length === 0;
+  el.playBtn.disabled = none;
+  el.playBtn.style.opacity = none ? 0.4 : 1;
+  el.playBtn.classList.remove("running", "paused");
+  el.playBtn.classList.toggle("compact", play.active && !play.paused);  // compact bar while playing
+  if (none) { el.playIcon.textContent = "▶"; el.playLabel.textContent = "단어 없음"; return; }
+  if (play.active && !play.paused) {
+    el.playBtn.classList.add("running");
+    el.playIcon.textContent = "⏸"; el.playLabel.textContent = "일시정지";
+  } else if (play.paused || play.resumable) {
+    el.playBtn.classList.add("paused");
+    el.playIcon.textContent = "▶"; el.playLabel.textContent = "이어서 계속";
+  } else {
+    el.playIcon.textContent = "▶"; el.playLabel.textContent = "듣기 시작";
+  }
+}
+
+// Show the word currently being read on the flashcard (revealed), so the screen tracks audio.
+function syncPlayCard(w) {
+  const idx = active().findIndex(x => x.id === w.id);
+  if (idx >= 0 && currentTab === "study") { store.ui.index = idx; isOpen = true; render(); }
+}
+
+function onPlayBtn() {
+  if (play.active && !play.paused) { pausePlay(); return; }   // running → pause
+  if (active().length === 0) { render(); return; }
+  if (quiz.active && !quiz.paused) pauseQuiz();               // never run both engines at once
+  if (play.paused || play.resumable) resumePlay();
+  else startPlay();
+}
+
+function startPlay() {
+  warmUpAudio();
+  play.active = true; play.paused = false; play.resumable = false;
+  buildQueueFor(play);
+  acquireWake();
+  updatePlayBtn();
+  runPlay();
+}
+function resumePlay() {
+  warmUpAudio();
+  play.active = true; play.paused = false; play.resumable = false;
+  acquireWake();
+  updatePlayBtn();
+  runPlay();                 // continues from saved play.queue / play.qpos
+}
+function pausePlay() {
+  play.paused = true; play.gen++;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  releaseWake();
+  store.ui.play = { paused: true, queue: play.queue.slice(), qpos: play.qpos };
+  save();
+  updatePlayBtn();
+}
+function stopPlay() {
+  play.active = false; play.paused = false; play.resumable = false; play.gen++;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  releaseWake();
+  if (store.ui) store.ui.play = null;
+  save();
+  updatePlayBtn();
+}
+
+async function runPlay() {
+  const myGen = ++play.gen;
+  const alive = () => play.active && !play.paused && play.gen === myGen;
+  if (!play.queue.length) buildQueueFor(play);
+
+  while (alive()) {
+    if (active().length === 0) {
+      stopPlay();
+      await speak("모든 단어를 외웠어요. 잘했어요!", "ko-KR");
+      render();
+      return;
+    }
+    const w = nextWordFor(play);
+    if (!w) { buildQueueFor(play); continue; }
+    syncPlayCard(w);
+
+    const reps = Math.max(1, cfg("repeat"));
+    for (let r = 0; r < reps && alive(); r++) {
+      await speak(w.en, "en-US");                    if (!alive()) return;
+      await pauseFor(350, alive);                    if (!alive()) return;
+      await speak(w.ko, "ko-KR");                    if (!alive()) return;
+      await pauseFor(300, alive);                    if (!alive()) return;
+      const exs = (w.ex || []).filter(Boolean);
+      for (let i = 0; i < exs.length && alive(); i++) {
+        await speak(exs[i], "en-US");                if (!alive()) return;
+        await pauseFor(300, alive);                  if (!alive()) return;
+      }
+      if (r < reps - 1) { await pauseFor(500, alive); if (!alive()) return; }
+    }
+    await pauseFor(650, alive);                       if (!alive()) return;  // gap before next word
+    play.qpos++;
+  }
+}
+
+el.playBtn.addEventListener("click", onPlayBtn);
+
+/* =========================================================================
+   ADD WORDS + SETTINGS + DATA I/O
+   ========================================================================= */
+
+/* ---------- Sheet open/close ---------- */
+function openSheet(s) { s.classList.remove("hidden"); }
+function closeSheet(s) { s.classList.add("hidden"); }
+el.addClose.addEventListener("click", () => closeSheet(el.addSheet));
+el.setClose.addEventListener("click", () => closeSheet(el.setSheet));
+
+el.btnAdd.addEventListener("click", () => {
+  showAIMode(true);
+  preview = [];
+  el.previewWrap.classList.add("hidden");
+  if (!bulkRunning) el.genProg.classList.add("hidden");
+  refreshKeyState();
+  updateBulkUI();               // surface any resumable bulk job
+  openSheet(el.addSheet);
+});
+el.btnSettings.addEventListener("click", () => {
+  syncSettingsUI();
+  openSheet(el.setSheet);
+});
+
+/* ---------- Add-words: mode switch + key ---------- */
+function showAIMode(ai) {
+  el.segAI.setAttribute("aria-selected", String(ai));
+  el.segManual.setAttribute("aria-selected", String(!ai));
+  el.modeAI.classList.toggle("hidden", !ai);
+  el.modeManual.classList.toggle("hidden", ai);
+}
+el.segAI.addEventListener("click", () => showAIMode(true));
+el.segManual.addEventListener("click", () => showAIMode(false));
+
+function refreshKeyState() {
+  el.keyState.textContent = cfg("apiKey") ? "✓ 저장됨" : "";
+  el.apiKey.value = cfg("apiKey");
+}
+
+/* ---------- Anthropic API (browser-direct) ---------- */
+async function generateOne(word, key) {
+  const sys =
+    "You are a Korean-English vocabulary tutor. For the given English word or idiom, " +
+    "reply with ONLY minified JSON of the exact shape " +
+    '{"ko":"<concise natural Korean meaning>","ex":["<sentence1>","<sentence2>","<sentence3>"]}. ' +
+    "Provide exactly 3 real-life English example sentences a Korean learner would find natural and useful. " +
+    "No markdown, no code fences, no extra text.";
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5",
+      max_tokens: 700,
+      system: sys,
+      messages: [{ role: "user", content: word }]
+    })
+  });
+  if (!resp.ok) {
+    let msg = "HTTP " + resp.status;
+    try { const e = await resp.json(); if (e.error && e.error.message) msg = e.error.message; } catch (_) {}
+    throw new Error(msg);
+  }
+  const data = await resp.json();
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const obj = extractJSON(text);
+  if (!obj || !obj.ko || !Array.isArray(obj.ex)) throw new Error("응답 형식 오류");
+  return { ko: String(obj.ko).trim(), ex: obj.ex.slice(0, 3).map(s => String(s).trim()) };
+}
+function extractJSON(t) {
+  try { return JSON.parse(t); } catch (_) {}
+  const i = t.indexOf("{"), j = t.lastIndexOf("}");
+  if (i >= 0 && j > i) { try { return JSON.parse(t.slice(i, j + 1)); } catch (_) {} }
+  return null;
+}
+function padEx(a) { a = (a || []).slice(0, 3); while (a.length < 3) a.push(""); return a; }
+
+/* ---------- Generation flow ---------- */
+let preview = [];   // candidate entries awaiting save
+
+el.genBtn.addEventListener("click", runGeneration);
+async function runGeneration() {
+  const key = (el.apiKey.value || cfg("apiKey")).trim();
+  if (!key) {
+    alert("먼저 Anthropic API 키를 입력하세요. (‘API 키 설정’ 열기)");
+    el.apiKey.closest("details").open = true;
+    return;
+  }
+  store.settings.apiKey = key; save(); refreshKeyState();
+
+  if (navigator.onLine === false) {
+    alert("오프라인 상태예요. AI 생성은 인터넷이 필요합니다. 지금은 ‘직접 입력’으로 추가하세요.");
+    return;
+  }
+
+  const words = [...new Set(el.aiInput.value.split("\n").map(s => s.trim()).filter(Boolean))];
+  if (!words.length) { alert("영어 단어/숙어를 한 줄에 하나씩 입력하세요."); return; }
+
+  el.genBtn.disabled = true;
+  el.genProg.classList.remove("hidden");
+  const results = [];
+  for (let i = 0; i < words.length; i++) {
+    el.progFill.style.width = Math.round((i / words.length) * 100) + "%";
+    el.progTxt.textContent = "생성 중… " + (i + 1) + "/" + words.length + "  (" + words[i] + ")";
+    try {
+      const g = await generateOne(words[i], key);
+      results.push({ en: words[i], ko: g.ko, ex: padEx(g.ex), rejected: false, error: null });
+    } catch (e) {
+      results.push({ en: words[i], ko: "", ex: ["", "", ""], rejected: true, error: String(e.message || e) });
+    }
+  }
+  el.progFill.style.width = "100%";
+  const ok = results.filter(r => !r.error).length;
+  el.progTxt.textContent = "완료: " + ok + "/" + words.length + " 성공";
+  el.genBtn.disabled = false;
+  preview = results;
+  renderPreview();
+}
+
+/* ---------- Manual paste flow ---------- */
+el.parseBtn.addEventListener("click", () => {
+  const lines = el.manualInput.value.split("\n").map(s => s.trim()).filter(Boolean);
+  const out = [];
+  lines.forEach(line => {
+    const parts = line.split("|").map(s => s.trim());
+    if (!parts[0]) return;
+    out.push({
+      en: parts[0], ko: parts[1] || "", ex: padEx(parts.slice(2, 5)),
+      rejected: false, error: parts.length < 2 ? "뜻이 비어 있음" : null
+    });
+  });
+  if (!out.length) { alert("‘단어 | 뜻 | 예문…’ 형식의 줄이 없어요."); return; }
+  preview = out;
+  renderPreview();
+});
+
+/* ---------- CSV / TXT bulk upload (large lists, resumable) ---------- */
+// Minimal RFC4180-ish splitter so commas inside "quoted, fields" don't break rows.
+function csvSplit(line) {
+  const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+function parseBulkText(text) {
+  const cands = [];
+  text.split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    const parts = line.includes("|") ? line.split("|").map(s => s.trim()) : csvSplit(line);
+    const word = (parts[0] || "").trim();
+    if (!word) return;
+    if (parts.length >= 2 && parts[1]) {
+      cands.push({ word: word, needAI: false, ko: parts[1], ex: padEx(parts.slice(2, 5).map(s => (s || "").trim())) });
+    } else {
+      cands.push({ word: word, needAI: true });   // single token → AI generates the rest
+    }
+  });
+  return cands;
+}
+// Add candidates to the persistent job, skipping duplicates (vs store and vs already-queued).
+function addToBulk(cands) {
+  if (!store.ui.bulk) store.ui.bulk = { queue: [], done: 0 };
+  const job = store.ui.bulk;
+  const have = new Set(store.words.map(w => w.en.toLowerCase()));
+  const queued = new Set(job.queue.map(c => c.word.toLowerCase()));
+  let dup = 0, added = 0, ai = 0;
+  cands.forEach(c => {
+    const k = c.word.toLowerCase();
+    if (have.has(k) || queued.has(k)) { dup++; return; }
+    queued.add(k); job.queue.push(c); added++; if (c.needAI) ai++;
+  });
+  save();
+  return { dup: dup, added: added, ai: ai };
+}
+function updateBulkUI() {
+  const job = store.ui.bulk;
+  const pending = job && job.queue ? job.queue.length : 0;
+  el.bulkResume.classList.toggle("hidden", !(pending && !bulkRunning));
+  if (pending && !bulkRunning) el.bulkResume.textContent = "▶ 이어서 하기 (" + pending + "개)";
+  el.bulkStop.classList.toggle("hidden", !bulkRunning);
+  if (!bulkRunning) el.bulkStatus.textContent = pending ? ("남은 대량 추가: " + pending + "개") : "";
+}
+
+let bulkRunning = false;
+function stopBulk() { bulkRunning = false; }
+async function runBulk() {
+  if (bulkRunning) return;
+  const job = store.ui.bulk;
+  if (!job || !job.queue.length) { updateBulkUI(); return; }
+  bulkRunning = true;
+  updateBulkUI();
+  el.genProg.classList.remove("hidden");
+  const key = (cfg("apiKey") || "").trim();
+  let pendingSave = 0, processed = 0;
+
+  while (job.queue.length && bulkRunning) {
+    const item = job.queue[0];
+    const k = item.word.toLowerCase();
+    if (store.words.some(w => w.en.toLowerCase() === k)) { job.queue.shift(); job.done++; continue; }
+
+    let entry;
+    if (item.needAI) {
+      if (!key) { el.bulkStatus.textContent = "AI 단어가 남았지만 API 키가 없어요. 키를 넣고 ‘이어서 하기’."; break; }
+      if (navigator.onLine === false) { el.bulkStatus.textContent = "오프라인이에요. 온라인에서 이어서 하세요."; break; }
+      try {
+        const g = await generateOne(item.word, key);
+        entry = { en: item.word, ko: g.ko, ex: padEx(g.ex) };
+      } catch (e) {
+        el.bulkStatus.textContent = "오류로 중단: " + (e.message || e) + " — ‘이어서 하기’로 재시도하세요.";
+        break;
+      }
+    } else {
+      entry = { en: item.word, ko: item.ko, ex: (item.ex || []).filter(Boolean) };
+    }
+
+    store.words.push({ id: uniqueId(entry.en), en: entry.en, ko: entry.ko, ex: entry.ex,
+      memorized: false, memorizedAt: 0, addedAt: Date.now(), stats: { seen: 0, right: 0, wrong: 0 } });
+    job.queue.shift(); job.done++; pendingSave++; processed++;
+
+    const totalN = job.done + job.queue.length;
+    el.progFill.style.width = Math.round((job.done / totalN) * 100) + "%";
+    el.progTxt.textContent = "추가 중… " + job.done + "/" + totalN + (item.needAI ? "  (" + item.word + ")" : "");
+
+    if (pendingSave >= 10) { save(); pendingSave = 0; }              // save each batch as it completes
+    if (processed % 20 === 0) await new Promise(r => setTimeout(r, 0));  // yield so the UI stays responsive
+  }
+  save();
+  bulkRunning = false;
+
+  if (!job.queue.length) {
+    el.progTxt.textContent = "완료! 총 " + job.done + "개 추가";
+    store.ui.bulk = null; save();
+    if (mc.active) stopMC(); if (ft.active) stopFlash();
+    render();
+    updateBulkUI();
+    maybeAutoCleanup();
+  } else {
+    el.progTxt.textContent = "중단됨 — " + job.queue.length + "개 남음 (이어서 할 수 있어요)";
+    updateBulkUI();
+  }
+}
+
+el.csvBtn.addEventListener("click", () => el.csvFile.click());
+el.csvFile.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const cands = parseBulkText(String(reader.result || ""));
+    if (!cands.length) { alert("파일에서 단어를 찾지 못했어요."); return; }
+    const r = addToBulk(cands);
+    updateBulkUI();
+    if (r.added === 0) { alert("모두 이미 있는 단어라 추가할 게 없어요. (중복 " + r.dup + "개)"); return; }
+    if (r.ai > 0 && !(cfg("apiKey") || "").trim()) {
+      alert("총 " + cands.length + "줄 · 중복 " + r.dup + "개 제외 · 추가 대기 " + r.added +
+            "개.\nAI 생성 단어 " + r.ai + "개는 API 키가 필요해요 — 키를 넣고 ‘이어서 하기’를 누르면 계속됩니다. 전체 행은 지금 추가돼요.");
+    } else {
+      alert("총 " + cands.length + "줄 · 중복 " + r.dup + "개 제외 · 추가 대기 " + r.added +
+            "개 (AI 생성 " + r.ai + "개). 지금 시작합니다.");
+    }
+    runBulk();
+  };
+  reader.readAsText(file);
+  el.csvFile.value = "";   // allow re-uploading the same file
+});
+el.bulkResume.addEventListener("click", runBulk);
+el.bulkStop.addEventListener("click", stopBulk);
+
+/* ---------- Preview render ---------- */
+function renderPreview() {
+  el.previewWrap.classList.remove("hidden");
+  el.previewList.innerHTML = "";
+  preview.forEach((p) => {
+    const card = document.createElement("div");
+    card.className = "prev-card" + (p.rejected ? " rejected" : "");
+
+    const top = document.createElement("div");
+    top.className = "pc-top";
+    const enIn = document.createElement("input");
+    enIn.value = p.en; enIn.placeholder = "영어 단어/숙어";
+    enIn.style.fontWeight = "800";
+    enIn.addEventListener("input", () => { p.en = enIn.value; });
+    const tgl = document.createElement("button");
+    tgl.className = "pc-toggle";
+    tgl.textContent = p.rejected ? "포함" : "제외";
+    tgl.addEventListener("click", () => {
+      p.rejected = !p.rejected;
+      card.classList.toggle("rejected", p.rejected);
+      tgl.textContent = p.rejected ? "포함" : "제외";
+      updatePrevCount();
+    });
+    top.appendChild(enIn); top.appendChild(tgl);
+    card.appendChild(top);
+
+    if (p.error) {
+      const er = document.createElement("div");
+      er.className = "pc-err";
+      er.textContent = "⚠ " + p.error + " — 직접 채우거나 제외하세요.";
+      card.appendChild(er);
+    }
+
+    const koIn = document.createElement("input");
+    koIn.value = p.ko; koIn.placeholder = "한국어 뜻";
+    koIn.addEventListener("input", () => { p.ko = koIn.value; });
+    card.appendChild(koIn);
+
+    p.ex.forEach((s, i) => {
+      const exIn = document.createElement("input");
+      exIn.value = s; exIn.placeholder = "예문 " + (i + 1);
+      exIn.addEventListener("input", () => { p.ex[i] = exIn.value; });
+      card.appendChild(exIn);
+    });
+
+    el.previewList.appendChild(card);
+  });
+  updatePrevCount();
+}
+function updatePrevCount() {
+  const keep = preview.filter(p => !p.rejected).length;
+  el.prevCount.textContent = "미리보기 " + preview.length + "개 · 저장 " + keep + "개";
+}
+el.prevClear.addEventListener("click", () => {
+  preview = [];
+  el.previewWrap.classList.add("hidden");
+});
+
+/* ---------- Save preview into the store ---------- */
+el.saveBtn.addEventListener("click", () => {
+  const keep = preview.filter(p => !p.rejected && p.en.trim() && p.ko.trim());
+  if (!keep.length) { alert("저장할 항목이 없어요. (제외되지 않고 단어·뜻이 채워진 항목만 저장됩니다)"); return; }
+  let added = 0, updated = 0;
+  keep.forEach(p => {
+    const en = p.en.trim(), ko = p.ko.trim();
+    const ex = p.ex.map(s => s.trim()).filter(Boolean);
+    const existing = store.words.find(x => x.en.toLowerCase() === en.toLowerCase());
+    if (existing) { existing.ko = ko; existing.ex = ex; existing.memorized = false; updated++; }
+    else { store.words.push({ id: uniqueId(en), en, ko, ex, memorized: false, addedAt: Date.now() }); added++; }
+  });
+  save();
+  render();
+  preview = [];
+  el.previewWrap.classList.add("hidden");
+  el.aiInput.value = ""; el.manualInput.value = "";
+  closeSheet(el.addSheet);
+  alert(added + "개 추가" + (updated ? ", " + updated + "개 갱신" : "") + " 완료.");
+  maybeAutoCleanup();   // may prompt if the list now exceeds 1000
+});
+function uniqueId(en) {
+  const base = "w_" + en.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  let id = base + "-" + Date.now().toString(36), n = 0;
+  while (store.words.some(x => x.id === id)) id = base + "-" + Date.now().toString(36) + "-" + (++n);
+  return id;
+}
+
+/* ---------- Settings wiring ---------- */
+function syncSettingsUI() {
+  el.setRate.value = cfg("rate");     el.rateVal.textContent = Number(cfg("rate")).toFixed(2) + "×";
+  el.setSilence.value = cfg("silence"); el.silVal.textContent = cfg("silence") + "초";
+  el.setRepeat.value = cfg("repeat"); el.repVal.textContent = cfg("repeat") + "회";
+  el.setShuffle.setAttribute("aria-checked", String(!!cfg("shuffle")));
+  el.apiKey2.value = cfg("apiKey");
+}
+el.setRate.addEventListener("input", () => {
+  store.settings.rate = parseFloat(el.setRate.value);
+  el.rateVal.textContent = store.settings.rate.toFixed(2) + "×"; save();
+});
+el.setSilence.addEventListener("input", () => {
+  store.settings.silence = parseInt(el.setSilence.value, 10);
+  el.silVal.textContent = store.settings.silence + "초"; save();
+});
+el.setRepeat.addEventListener("input", () => {
+  store.settings.repeat = parseInt(el.setRepeat.value, 10);
+  el.repVal.textContent = store.settings.repeat + "회"; save();
+});
+el.setShuffle.addEventListener("click", () => {
+  store.settings.shuffle = !cfg("shuffle");
+  el.setShuffle.setAttribute("aria-checked", String(store.settings.shuffle)); save();
+});
+el.apiKey2.addEventListener("change", () => {
+  store.settings.apiKey = el.apiKey2.value.trim(); save(); refreshKeyState();
+});
+
+/* ---------- Export / Import ---------- */
+el.exportBtn.addEventListener("click", () => {
+  // Never write the API key or runtime session state into a shareable backup file.
+  const out = JSON.parse(JSON.stringify(store));
+  if (out.settings) delete out.settings.apiKey;
+  if (out.ui) { delete out.ui.quiz; delete out.ui.play; }
+  if (!out.archive) out.archive = [];
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "vocab-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+el.importBtn.addEventListener("click", () => el.importFile.click());
+el.importFile.addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try { data = JSON.parse(reader.result); } catch (_) { alert("JSON을 읽을 수 없어요."); return; }
+    if (!data || !Array.isArray(data.words)) { alert("올바른 백업 파일이 아니에요 (words 목록 없음)."); return; }
+    if (!confirm("가져오면 현재 " + store.words.length + "개가 백업의 " + data.words.length +
+                 "개로 완전히 교체됩니다. 계속할까요?")) return;
+    store = normalizeStore(data);
+    if (quiz.active) stopQuiz();
+    if (mc.active) stopMC();
+    if (ft.active) stopFlash();
+    save();
+    syncSettingsUI();
+    render();
+    closeSheet(el.setSheet);
+    alert("가져오기 완료: " + store.words.length + "개.");
+  };
+  reader.readAsText(file);
+  el.importFile.value = "";   // allow re-importing the same file
+});
+function normalizeStore(data) {
+  const settings = Object.assign({}, CFG_DEFAULTS, data.settings || {});
+  if (data.settings && data.settings.micIntroSeen) settings.micIntroSeen = true;
+  // Never inherit a key from an imported file; keep the importer's own key (or empty).
+  settings.apiKey = (store && store.settings && store.settings.apiKey) || "";
+  const words = (data.words || []).map((w, i) => ({
+    id: w.id || ("w_imp_" + i + "_" + Date.now().toString(36)),
+    en: String(w.en || "").trim(),
+    ko: String(w.ko || "").trim(),
+    ex: Array.isArray(w.ex) ? w.ex.map(x => String(x)) : [],
+    memorized: !!w.memorized,
+    memorizedAt: w.memorizedAt || 0,
+    addedAt: w.addedAt || 0,
+    stats: (w.stats && typeof w.stats === "object")
+      ? { seen: w.stats.seen || 0, right: w.stats.right || 0, wrong: w.stats.wrong || 0 }
+      : { seen: 0, right: 0, wrong: 0 }
+  })).filter(w => w.en);
+  const activity = (data.activity && typeof data.activity === "object") ? data.activity : {};
+  const archive = Array.isArray(data.archive) ? data.archive : [];
+  return { version: 1, words, settings, activity, archive, ui: { index: 0 } };
+}
+
+/* ---------- Stats screen ---------- */
+el.btnStats.addEventListener("click", () => { renderStats(); openSheet(el.statSheet); });
+el.statClose.addEventListener("click", () => closeSheet(el.statSheet));
+
+function renderStats() {
+  el.stTotal.textContent = store.words.length;
+  el.stMem.textContent = memorized().length;
+  const weekAgo = Date.now() - 7 * 864e5;
+  el.stWeek.textContent = store.words.filter(w => (w.addedAt || 0) >= weekAgo).length;
+  el.stStreak.textContent = currentStreak();
+
+  // Last 7 days bar chart (oldest → today).
+  const days = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) { const d = new Date(today); d.setDate(today.getDate() - i); days.push(d); }
+  const counts = days.map(d => (store.activity && store.activity[dateKey(d)]) || 0);
+  const max = Math.max(1, ...counts);
+  const names = ["일", "월", "화", "수", "목", "금", "토"];
+  el.chart7.innerHTML = "";
+  days.forEach((d, i) => {
+    const bar = document.createElement("div"); bar.className = "bar";
+    const cnt = document.createElement("div"); cnt.className = "bar-cnt"; cnt.textContent = counts[i] || "";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill" + (i === 6 ? " today" : "");
+    fill.style.height = Math.round((counts[i] / max) * 90) + "px";
+    const day = document.createElement("div"); day.className = "bar-day"; day.textContent = names[d.getDay()];
+    bar.appendChild(cnt); bar.appendChild(fill); bar.appendChild(day);
+    el.chart7.appendChild(bar);
+  });
+
+  // Per-word history (only words that have been quizzed), most-quizzed first.
+  const rows = store.words.map(w => ({ w, s: wstats(w) }))
+    .filter(o => o.s.seen > 0)
+    .sort((a, b) => b.s.seen - a.s.seen);
+  el.histEmpty.classList.toggle("hidden", rows.length > 0);
+  el.wordHistory.innerHTML = "";
+  rows.forEach(({ w, s }) => {
+    const graded = s.right + s.wrong;
+    const pct = graded ? Math.round((s.right / graded) * 100) : null;
+    const row = document.createElement("div"); row.className = "wh-row";
+    const en = document.createElement("div"); en.className = "wh-en"; en.textContent = w.en + (w.memorized ? " ✓" : "");
+    const num = document.createElement("div"); num.className = "wh-num";
+    num.textContent = s.seen + "회 · " + s.right + "⭕ " + s.wrong + "❌";
+    const p = document.createElement("div");
+    p.className = "wh-pct " + (pct === null ? "" : pct >= 80 ? "good" : pct >= 50 ? "mid" : "low");
+    p.textContent = pct === null ? "—" : pct + "%";
+    row.appendChild(en); row.appendChild(num); row.appendChild(p);
+    el.wordHistory.appendChild(row);
+  });
+}
+
+/* ---------- PWA: inline manifest (canvas icons) + optional service worker ---------- */
+function setupPWA() {
+  try {
+    const icon = (size) => {
+      const c = document.createElement("canvas"); c.width = c.height = size;
+      const x = c.getContext("2d");
+      x.fillStyle = "#0b0f17"; x.fillRect(0, 0, size, size);
+      x.fillStyle = "#4f9dff";
+      x.font = "bold " + Math.round(size * 0.6) + "px -apple-system, sans-serif";
+      x.textAlign = "center"; x.textBaseline = "middle";
+      x.fillText("가", size / 2, size * 0.55);
+      return c.toDataURL("image/png");
+    };
+    const manifest = {
+      name: "영어 단어장", short_name: "단어장",
+      start_url: ".", scope: "./", display: "standalone", orientation: "portrait",
+      background_color: "#0b0f17", theme_color: "#0b0f17",
+      icons: [
+        { src: icon(192), sizes: "192x192", type: "image/png", purpose: "any" },
+        { src: icon(512), sizes: "512x512", type: "image/png", purpose: "any maskable" }
+      ]
+    };
+    const link = document.createElement("link");
+    link.rel = "manifest";
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+    document.head.appendChild(link);
+    const apple = document.createElement("link");
+    apple.rel = "apple-touch-icon"; apple.href = icon(180);
+    document.head.appendChild(apple);
+  } catch (e) {}
+  // Companion service worker (http/https only; app still works fully without it).
+  // Network-first SW + this update detection = new deploys are picked up, and the
+  // user gets a one-tap reload prompt instead of being stuck on a cached version.
+  try {
+    if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+      const hadController = !!navigator.serviceWorker.controller;
+      let bannerShown = false;
+      const showUpdateBanner = () => {
+        if (bannerShown || !el.updateBar) return;
+        bannerShown = true;
+        el.updateBar.classList.remove("hidden");
+      };
+      if (el.updateReload) {
+        el.updateReload.addEventListener("click", () => {
+          if (quiz.active && !quiz.paused) pauseQuiz();   // persist session before reload
+          if (play.active && !play.paused) pausePlay();
+          location.reload();
+        });
+      }
+
+      navigator.serviceWorker.register("./sw.js").then((reg) => {
+        // A new worker was already waiting when we loaded.
+        if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner();
+        // A new worker starts installing after a deploy.
+        reg.addEventListener("updatefound", () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener("statechange", () => {
+            if (nw.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner();
+          });
+        });
+      }).catch(() => {});
+
+      // The new SW took control (skipWaiting) — offer a reload, unless this was the
+      // very first install (no prior controller = nothing stale to replace).
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (hadController) showUpdateBanner();
+      });
+
+      // Re-check for a new deploy each time the app regains focus.
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          navigator.serviceWorker.getRegistration()
+            .then((r) => { if (r) r.update(); }).catch(() => {});
+        }
+      });
+    }
+  } catch (e) {}
+}
+
+// Persist a running session if the app is being backgrounded/closed (Safari-friendly).
+window.addEventListener("pagehide", () => {
+  if (quiz.active && !quiz.paused) pauseQuiz();
+  if (play.active && !play.paused) pausePlay();
+});
+
+/* =========================================================================
+   Boot
+   ========================================================================= */
+store = load();
+if (!store.settings) store.settings = {};   // migrate older saved stores
+if (!store.activity) store.activity = {};
+if (!Array.isArray(store.archive)) store.archive = [];
+if (!store.ui) store.ui = { index: 0 };
+store.words.forEach(w => {
+  if (!w.stats) w.stats = { seen: 0, right: 0, wrong: 0 };
+  if (w.memorizedAt === undefined) w.memorizedAt = 0;
+});
+
+// Restore a paused voice-quiz session (survives closing the app mid-quiz).
+if (store.ui.quiz && store.ui.quiz.paused &&
+    store.ui.quiz.mode === cfg("quizMode") &&
+    Array.isArray(store.ui.quiz.queue) && store.ui.quiz.queue.length) {
+  quiz.queue = store.ui.quiz.queue.slice();
+  quiz.qpos = store.ui.quiz.qpos || 0;
+  quiz.resumable = true;
+}
+// Restore a paused driving-mode session (survives closing the app mid-drive).
+if (store.ui.play && store.ui.play.paused &&
+    Array.isArray(store.ui.play.queue) && store.ui.play.queue.length) {
+  play.queue = store.ui.play.queue.slice();
+  play.qpos = store.ui.play.qpos || 0;
+  play.resumable = true;
+}
+
+save();       // persist seed / migrations on first run
+setupPWA();
+render();
+maybeAutoCleanup();   // if a large list already has week-old memorized words
+</script>
